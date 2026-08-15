@@ -1,0 +1,12 @@
+{
+  "name": "kyxo-prototypes",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway prototypes validating the Kyxo kernel abstractions. Zero runtime dependencies.",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.0"
+  }
+}
