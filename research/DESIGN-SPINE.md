@@ -338,4 +338,109 @@ targets as strategies/adapters instead.
 
 ## Amendment log
 
-- (empty until adversarial review)
+Adversarial review (2026-08-16): ten reviewers (eight personas + two auditors), 121 findings
+(7 FATAL, 49 SERIOUS, 46 MODERATE, 19 MINOR); unanimous vote **BUILD WITH CHANGES**, unanimous
+QUALIFIED-YES on the useful-layer gate question. Full record: `research/ADVERSARIAL-REVIEW.md`.
+The following amendments are **binding adjudications**; where they contradict the body text
+above or any document in `docs/`, the amendment wins and the documents are being revised to
+match.
+
+**A1 — Fork/effect-identity semantics (resolves FATAL-1, distsys).** Effect identity
+(idempotency-key scope) is **lineage-scoped** by default. Forking a cell whose parent journal
+extends past the cut requires an explicit, journaled per-pending-invocation disposition:
+`adopt` (take the parent-suffix commit), `re-lease` (re-execute), or `compensate`. World-effect
+divergence between lineages is a first-class, documented state; compensation is the normative
+repair for irreversible effects (doc 13 scenario E promoted into ADR-002). Idempotency keys are
+**content-inclusive** (args hash mandatory, position optional). An executable property-test
+spec of journal/checkpoint/fork/dedup interactions (linear crash recovery; fork with non-empty
+suffix; fork with in-flight pendings; per-lineage key scope) is a **Wave-0 exit gate** — if it
+cannot be written consistently, ADR-002 reopens.
+
+**A2 — Budget semantics: reserve-at-lease / settle-at-outcome (resolves FATAL-6, consistency).**
+Doc 13 scenario P's verdict is upheld; decrement-at-commit is retired everywhere. Normative
+model: admission = reservation against remaining budget at submit; settlement at outcome
+commit; release of unused reservation. Distinct event kinds (`grant.reserved`,
+`grant.settled`, `grant.released`). Federation's reserve/reconcile is the same mechanism with
+lagged settlement, not an exception.
+
+**A3 — Guarantee grades and honest positioning (resolves FATAL-2, provider).** Every Binding
+carries a sealed, journaled **guarantee grade per policy-relevant property**: `enforced`
+(kernel-mediated), `observed` (post-hoc reconciliation), `declared` (manifest-trusted).
+Positioning rewritten: Kyxo claims kernel-grade enforcement **below the mediation waterline**
+(local tools, self-hosted/open models, sandboxed execution) and attestation + audit above it
+(delegated vendor harnesses, provider-side execution domains). V1 target segments are the
+mediation-dominant ones: self-hosted/open-model stacks, regulated/air-gapped deployments,
+local-first products. New R5 leading indicator: share of effectful journal events originating
+in remote/delegated domains, tracked from V1.
+
+**A4 — Facade freeze (resolves FATAL-3, SDK).** The provider/strategy-facing facade
+(`KernelApi`/`InvokeCtx`/`HarnessCtx`) is promoted to a **Wave-0 frozen, versioned,
+conformance-tested contract** alongside the wire schemas. Normative verb list (decided by the
+four prototypes' demonstrated needs): bind, invoke, resume (with re-grant option), cancel,
+attenuate, getGrant (handle-shaped, see A8), **charge**, storeArtifact/readArtifact, scoped
+journal read, checkpoint, createCell, discovery (listCapabilities), Kind verbs
+(registerKind/createKindObject/getKindObject/watch), injected clock. ADR-010's replaceability
+claim is scoped to the execution record until facade conformance fixtures exist.
+
+**A5 — Governance workstream (resolves FATAL-4, OSS maintainer).** Wave 0 gains a governance
+deliverable with the same priority as the schema freeze: Apache-2.0 (code) + an open
+specification license (schemas/conformance fixtures), DCO, trademark + conformance-mark
+policy, a published spec-change process with named maintainers, and a pre-committed trigger
+for moving the spec to a neutral foundation at a defined adoption threshold. Governance
+absence added to the risk register with a kill signal.
+
+**A6 — EXTEND re-argument and the enforcement floor (resolves FATAL-5, CTO).** The claim
+"cannot be retrofitted" is retracted as the sole BUILD discriminator. Surviving grounds: (a)
+the negotiation/manifest layer has no home in any incumbent kernel; (b) a clean-slate record
+format avoids hostage-to-host-schema drift; (c) host-framework churn and governance exposure.
+The honest statement: middleware retrofits AND Kyxo V1 both bind only cooperative code —
+therefore a **minimal non-cooperative enforcement floor moves into the MVP**: every effectful
+standard capability (shell, HTTP) runs OS-sandboxed with grant-scoped credentials/egress so
+claim F7 is falsifiable against a malicious strategy. EXTEND remains alive as a documented
+fallback (strategies + spec-only record format on MAF/LangGraph), triggered if Wave-4/5
+isolation measurements fail the crossing-cost budget.
+
+**A7 — MVP/roadmap reconciliation (resolves FATAL-7, consistency).** Adapter roster: doc 14's
+(Anthropic Messages, OpenAI Responses, Gemini, one OpenAI-compat adapter with vLLM + Ollama
+manifests). Wave numbering: doc 15's 0–5 is canonical; doc 14's deferral labels rewritten in
+those terms.
+
+**A8 — Handles, not strings (security).** The in-process V1 API is handle-shaped: userland
+receives unforgeable Grant/Binding handles and never presents raw ID strings for resolution;
+journal grant references are non-resolvable identifiers. ADR-013 updated so the reference
+kernel does not itself commit the knowing-a-string-is-authority sin.
+
+**A9 — Evidence relabeling (evidence auditor).** (i) The graph-absence breadth claim is scoped
+honestly: zero of the SEVEN source-inspected coding agents (SCO/HIGH); Copilot cloud agent
+shows none in its documented pipeline (FACT); Windsurf not evidenced. (ii) "Realtime/Live
+cannot be lowered onto function calls" is INFERENCE/HIGH grounded in transport FACTs, not
+FACT; the methodology has no label-elevation mechanism and docs stating otherwise are
+corrected. Both conclusions stand unchanged on honest labels.
+
+**A10 — Prototype-driven contract fixes.** Suspension records carry an `origin` discriminator
+(provider | policy | kernel) with distinct resume semantics. Tiered axes carry their ordered
+ladder in manifest data (the kernel never knows axis semantics). Cancellation REQUESTS are
+journaled, not only honored transitions. `artifact.stored` is journaled per producing
+invocation with fresh provenance even when the CAS payload dedups. ArtifactMeta carries a
+label/kind field. Child invocations run in fresh cells; spawn semantics are normative
+(single-writer reentrancy deadlock is designed away, not documented around).
+
+**A11 — Memoization is not dedup.** Reliability dedup (bounded window, TTL ≥ retry horizon)
+and the replay cache (content-keyed, indefinite, policy-governed — what delta execution uses)
+are two mechanisms with two contracts; conflating them was the prototype's cheat, not the
+design.
+
+**A12 — Audit-grade allow path (enterprise).** Journaling of allow-path policy traces is a
+policy-class knob: advisory-plane by default, truth-plane in the regulated profile. Any
+model-judge policy verdict that gates an effect is always journaled with an input hash.
+
+**A13 — Selection contract (resolves the C3 hole).** Bind-time negotiation gates eligibility;
+**selection** among eligible candidates is a routing strategy with a defined contract
+(`rank(candidates, telemetry, policy) → choice + journaled rationale`). V1 default: declared
+preference order + probe freshness. Telemetry-driven ranking is Wave-3 scope with its schema
+frozen now.
+
+**A14 — Curation economics (AI-infra).** The manifest catalog ships conformance-derived
+manifests for the four MVP adapters only; the community catalog is a governance-workstream
+deliverable, not a kernel promise. Enforcement badges appear only on probe-backed axes;
+manifest-trusted axes are explicitly `declared`-grade (ties to A3).
