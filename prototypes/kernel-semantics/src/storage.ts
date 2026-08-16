@@ -54,23 +54,44 @@ export class Storage {
 
   /** Crash controls (test-driven). */
   crashAt: number | null = null;
+  crashWhen: ((serialized: string) => boolean) | null = null;
   tornWrite = false;
   private crashLabel = 'write';
 
+  /** Crash before the Nth durable write. */
   armCrash(nthWrite: number, opts?: { torn?: boolean; label?: string }): void {
     this.crashAt = nthWrite;
+    this.crashWhen = null;
     this.tornWrite = opts?.torn ?? false;
     this.crashLabel = opts?.label ?? 'write';
   }
 
+  /**
+   * Crash before the first write whose serialized payload satisfies `predicate`.
+   *
+   * Counting writes to reach a semantic position is brittle: the count changes whenever
+   * the record format does, and a stale count silently tests the wrong moment (or, worse,
+   * never fires and the test passes for the wrong reason). Naming the position instead
+   * keeps crash tests pinned to meaning.
+   */
+  armCrashWhen(predicate: (serialized: string) => boolean, opts?: { torn?: boolean; label?: string }): void {
+    this.crashAt = null;
+    this.crashWhen = predicate;
+    this.tornWrite = opts?.torn ?? false;
+    this.crashLabel = opts?.label ?? 'match';
+  }
+
   disarm(): void {
     this.crashAt = null;
+    this.crashWhen = null;
     this.tornWrite = false;
   }
 
   private tick(payload: string, sink: (v: string) => void): void {
     this.writeCount += 1;
-    if (this.crashAt !== null && this.writeCount >= this.crashAt) {
+    const byCount = this.crashAt !== null && this.writeCount >= this.crashAt;
+    const byMatch = this.crashWhen !== null && this.crashWhen(payload);
+    if (byCount || byMatch) {
       if (this.tornWrite) sink(payload.slice(0, Math.max(1, Math.floor(payload.length / 2))));
       throw new CrashError(this.crashLabel);
     }
