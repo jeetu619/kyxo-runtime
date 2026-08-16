@@ -1,14 +1,21 @@
 # 08 — Event and State Model
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> **Post-review status (2026-08-16, phase 2).** This document predates the adversarial review; the review's
 > binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1, A10, A11, A12. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> full findings in `research/ADVERSARIAL-REVIEW.md`. Since phase 2 the **executable semantics** in
+> `prototypes/kernel-semantics/` — normative prose in `docs/17-KERNEL-SEMANTICS.md`,
+> `docs/18-KERNEL-INVARIANTS.md`, `docs/19-CRASH-RECOVERY-MODEL.md` — supersede prose wherever the two
+> disagree; this document is the *rationale and evidence* record for the same mechanisms.
+> **Applied here:** A1, A2, A10, A11, A12 (plus A8 where it bears on journal grant references) — see
+> the Revision record at the foot of this document. **Outstanding:** none known.
+> Where this document conflicts with the Amendment log or the executable semantics, **those govern**.
 
 
 Status: DECIDED per `research/DESIGN-SPINE.md` §3 (kernel object 4: Event; object 8: Checkpoint), §5, §7, §8. Everything in this document is OUR PROPOSAL unless carrying an explicit evidence label per `research/METHODOLOGY.md`. Vocabulary follows spine §2 exactly: *kernel* (the minimal core), *runtime* (kernel + standard capabilities + SDKs), *harness* (a behaviour contract run in a cell — never the kernel), *event system* (typed append-only journal + derived advisory streams).
 
-This document specifies the event system and the state model: the journal-first durability decision, the event envelope, the full event taxonomy, the two-plane guarantee split, two-tier storage and compaction, cells/checkpoints/forking, delivery semantics, schema evolution, and — as the headline deliverable — the failure table mapping all seventeen mission failure scenarios onto kernel mechanisms. Sibling docs: object definitions in 05-KERNEL-PRIMITIVES.md, manifests and negotiation in 06-CAPABILITY-SPEC.md, process architecture in 07-RUNTIME-ARCHITECTURE.md, orchestration strategies in 04-ORCHESTRATION-MODELS.md, supervision policy detail in doc 13, verification in doc 16.
+This document specifies the event system and the state model: the journal-first durability decision, the event envelope, the full event taxonomy, the two-plane guarantee split, two-tier storage and compaction, cells/checkpoints/resume/fork, delivery semantics, schema evolution, and — as the headline deliverable — the failure table mapping all seventeen mission failure scenarios onto kernel mechanisms. Sibling docs: object definitions in 05-KERNEL-PRIMITIVES.md, manifests and negotiation in 06-CAPABILITY-SPEC.md, process architecture in 07-RUNTIME-ARCHITECTURE.md, orchestration strategies in 04-ORCHESTRATION-MODELS.md, supervision policy detail in doc 13, verification in doc 16.
+
+**Normative pointer (phase 2).** The record format, the checkpoint composite, the resume/fork split, the effect-class taxonomy, the dedup/replay-cache split and the uncertainty lifecycle are specified normatively in **`docs/17-KERNEL-SEMANTICS.md`** (with the checked invariants in `docs/18-KERNEL-INVARIANTS.md` and the crash matrix in `docs/19-CRASH-RECOVERY-MODEL.md`) and are executable in `prototypes/kernel-semantics/`. This document states *why* those mechanisms are shaped as they are and carries the failure table; where a field list or a state name differs, doc 17 wins.
 
 ---
 
@@ -27,7 +34,7 @@ All three mature durable-execution systems enforce one invariant — determinist
 
 **Interpretation.** Positional replay buys the strictest failure detection in exchange for making orchestration code a versioned durable contract. In agent workloads the deterministic core shrinks to a trivial fold (append event, check pending invocations, loop) while prompts, models, tool schemas and harness wiring change weekly. The contract Temporal sells is therefore levied on exactly the part of the system that churns fastest. Restate and DBOS demonstrate that the same durability invariant holds under a *record-and-inject* discipline in which the journal, not the code, is the identity of the run.
 
-**Implication.** The Kyxo journal is **journal-first**: the truth plane records typed outcomes of effects (Invocation transitions, Artifact commits, Grant charges); cell state is a projection over the journal; recovery is *load checkpoint → fold journal suffix → re-lease pending invocations* — never re-execute-and-match. There is no `patched()` equivalent, no requirement that old code paths survive in new binaries, and no positional identity between code and history. What we give up — Temporal's mismatch detection as a bug alarm — we replace with (a) definition hashes pinned in every checkpoint and every event (§6), so drift is detected as a *data* comparison at resume time rather than a replay crash mid-run, and (b) fork-from-checkpoint as the sanctioned response to drift (§6). Deterministic *re-derivation of projections* is still guaranteed — folding the same journal always yields the same state — which is the property audit, debugging and conformance testing actually need.
+**Implication.** The Kyxo journal is **journal-first**: the truth plane records typed outcomes of effects (Invocation transitions, Artifact productions, Grant reservations and settlements); cell state is a projection over the journal; recovery is *load checkpoint → fold the committed journal suffix → **triage** pending invocations by declared effect class* — re-lease the classes that are safe to re-execute, and move the classes that are not into the explicit `uncertain` state that only a journaled disposition can leave (§7.5) — never re-execute-and-match. (Amendment A1: the earlier phrasing "re-lease pending invocations" is retired; blanket re-lease is exactly the double-apply bug the effect-class triage exists to prevent.) There is no `patched()` equivalent, no requirement that old code paths survive in new binaries, and no positional identity between code and history. What we give up — Temporal's mismatch detection as a bug alarm — we replace with (a) definition hashes pinned in every checkpoint and every event (§6), so drift is detected as a *data* comparison at resume time rather than a replay crash mid-run, and (b) fork-from-checkpoint as the sanctioned response to drift (§6). Deterministic *re-derivation of projections* is still guaranteed — folding the same journal always yields the same state — which is the property audit, debugging and conformance testing actually need.
 
 **Confidence.** HIGH. Three independent systems demonstrate the invariant is separable from positional replay; the friction inventory against AI workloads is first-party documentation, not our reconstruction.
 
@@ -42,7 +49,7 @@ The Event is kernel object 4 (spine §3): typed, versioned, append-only, two-tie
 | Field | Type | Semantics |
 |---|---|---|
 | `id` | ULID | Globally unique, time-sortable. Assigned by the kernel at append. |
-| `seq` | integer | Cell-local journal position. Dense, monotonic per cell. The recovery cursor. |
+| `seq` | integer | Journal position within one **execution** — the lineage that owns the journal (a cell's current lineage; a fork starts a new execution at `seq` 1, §6.5). Dense, strictly monotonic, never reused. The recovery cursor, and the consistency boundary a checkpoint cuts at (`cutSeq`, §6.4). |
 | `kind` | string | Reverse-namespaced event kind, e.g. `kyxo.invocation.completed`. The registry of kinds is closed for `kyxo.*`; userland kinds live under Kind-instance events (§3). |
 | `schemaVersion` | integer | Version of this kind's payload schema. `(kind, schemaVersion)` is the unit of evolution (§8). |
 | `protocolVersion` | string | Date-versioned kernel protocol revision the writer spoke (spine §8; MCP-style `YYYY-MM-DD`). |
@@ -52,7 +59,7 @@ The Event is kernel object 4 (spine §3): typed, versioned, append-only, two-tie
 | `correlationId` | id | Constant across a causal tree (typically the root Objective's id). The audit query key. |
 | `causationId` | id? | The `id` of the event that directly caused this one. Gives the causal DAG. |
 | `actorId` | principal | Who caused it: a capability identity, a human principal, or `kernel`. **Stamped kernel-side, never writer-supplied** — Temporal's Principal Attribution sets the precedent that attribution must be unforgeable (FACT, research/notes/durable-execution.md). |
-| `grantId` | id? | The grant under whose authority the action ran. Absent only on kernel housekeeping events. |
+| `grantId` | id? | The grant under whose authority the action ran. Absent only on kernel housekeeping events. **Non-resolvable identifier** (amendment A8): it names authority for audit and lineage queries; it can never be presented back to the kernel to *obtain* authority. Authority is the unforgeable Grant handle the kernel minted, and handle identity — not string equality — is what the kernel checks (doc 11, ADR-013). |
 | `payload` | object? | Small, typed, inline data. Anything above the inline threshold (§5) must be an artifact ref. |
 | `payloadHash` | hash | Content hash of the canonical payload. Present even for inline payloads — this is what the chain covers (§2.3). |
 | `artifacts` | ref[] | Content-addressed references `{ref, role, labels}` into the CAS. Roles: `input`, `result`, `error`, `evidence`, `suspension`, `snapshot`, … |
@@ -80,9 +87,10 @@ A kernel event on the truth plane — an invocation committing:
   "grantId": "grant_01J8FY...",
   "payload": {
     "outcome": "completed",
-    "idempotencyKey": "ik_cell_review-run-7:t14:model-call",
+    "effectKey": "sha256:5f2a...",
+    "effectClass": "external-idempotent",
     "leaseEpoch": 2,
-    "charge": { "tokensIn": 18422, "tokensOut": 902, "usd": 0.1417 }
+    "landedExternal": true
   },
   "payloadHash": "sha256:7c1e...",
   "artifacts": [
@@ -93,6 +101,8 @@ A kernel event on the truth plane — an invocation committing:
   "integrity": { "prev": "sha256:e3b0...", "self": "sha256:11f4..." }
 }
 ```
+
+Two things this example encodes. The **effect key is content-inclusive** (amendment A1): it is a hash over `(capability, step, request)`, not a positional `cell:turn:step` string, so the same step re-issued with different arguments is a *different* effect and cannot be absorbed as a duplicate. And **budget movement is not a field of the outcome** (amendment A2): the settlement rides in its own `kyxo.grant.settled` event, emitted inside the same atomic commit record as this one. A commit record is the unit of atomicity — its events land entirely or not at all, and a torn trailing record is discarded at recovery — which is what lets outcome, artifact provenance and budget settlement be separate typed events without being separately durable.
 
 A userland Kind-instance event — an Objective transitioning (see §3.3):
 
@@ -153,34 +163,49 @@ Two families. **Kernel events** (`kyxo.*`) are the closed vocabulary the kernel 
 | `kyxo.binding.sealed` | kernel negotiator | capability id, chosen dialect/tier set, grantId, policy route, manifest hash | truth |
 | `kyxo.binding.failed` | kernel negotiator | typed missing-axis / version-mismatch reasons (fail-loud, spine §4) | truth |
 | `kyxo.binding.revoked` | kernel | reason, revoking principal | truth |
-| `kyxo.invocation.submitted` | scheduler | bindingId, idempotency key, args refs, deadline, correlation/causation | truth |
-| `kyxo.invocation.suspended` | kernel | suspension class (`input-required` \| `auth-required` \| `approval-required` \| `budget-exceeded`), typed suspension payload ref | truth |
-| `kyxo.invocation.resumed` | kernel | resume payload ref, resuming principal | truth |
-| `kyxo.invocation.completed` | kernel (at commit) | outcome refs, charge summary, lease epoch, evidence refs if gated | truth |
-| `kyxo.invocation.failed` | kernel | error class, error artifact ref, attempts consumed | truth |
-| `kyxo.invocation.canceled` / `.rejected` | kernel | cancel origin / rejection reason (A2A `rejected` adopted — executors may decline; FACT, research/notes/a2a-protocol.md) | truth |
+| `kyxo.invocation.admitted` | kernel | bindingId, effect key, **effect class**, args refs, deadline, `requiresEvidence`, correlation/causation. Admission is authority check + policy stages + budget **reservation**, all before dispatch | truth |
+| `kyxo.invocation.dispatched` | kernel | effect key, effect class, lease epoch, `external` flag. This is the *intent record*: without it a crash between decision and effect is undetectable (§7.5) | truth |
+| `kyxo.invocation.suspended` | kernel | **`origin` discriminator (`provider` \| `policy` \| `kernel`)** — amendment A10 — plus suspension class (`input-required` \| `auth-required` \| `approval-required` \| `budget-exceeded`) and typed suspension payload ref. Origin determines resume semantics: a provider suspension re-enters the provider with a typed payload, a policy suspension resumes only after the policy condition clears, a kernel suspension is lifted by the kernel (budget top-up, lease re-issue) | truth |
+| `kyxo.invocation.resumed` | kernel | resume payload ref, resuming principal, `origin` echoed from the suspension | truth |
+| `kyxo.invocation.completed` | kernel (at commit) | effect key, outcome refs, lease epoch, `landedExternal`, evidence refs if gated | truth |
+| `kyxo.invocation.failed` | kernel | error class, error artifact ref, attempts consumed, `landedExternal` | truth |
+| `kyxo.invocation.cancel.requested` | kernel | target invocation/cell, requesting principal, reason. **The request is journaled, not only the honored transition** (amendment A10): a request that is never honored — provider ignored it, lease lapsed first — is exactly the case audit needs and the case an honored-transitions-only log erases | truth |
+| `kyxo.invocation.canceled` / `.rejected` | kernel | cancel origin / rejection reason (A2A `rejected` adopted — executors may decline; FACT, research/notes/a2a-protocol.md); `landedExternal` records whether an external effect had already landed when cancellation took hold | truth |
+| `kyxo.invocation.uncertain` | kernel (recovery triage) | effect key, effect class, descriptor, since. The external outcome is unknown; never guessed (§7.5) | truth |
+| `kyxo.invocation.uncertainty.resolved` | kernel | disposition (`probe` \| `adopt-landed` \| `compensate` \| `abandon-failed`), resolved state, probe verdict or authorizing principal | truth |
 | `kyxo.attempt.started` / `.progress` / `.failed` | executing provider | attempt number, lease id, partial output deltas, retry sentinel | **advisory** |
-| `kyxo.artifact.committed` | kernel | content hash, size, producing invocationId, input refs, taint/integrity/confidentiality labels | truth |
+| `kyxo.artifact.produced` | kernel | content hash, size, producing invocationId, input refs, **label/kind** (amendment A10), taint/integrity/confidentiality labels. **Journaled once per producing invocation even when the CAS dedups the bytes** (A10/I14): content addressing dedups *payloads*, never *records* (§7.1) | truth |
 | `kyxo.artifact.promoted` | kernel commit gate | target ref, evidence refs that satisfied the gate (doc 16) | truth |
 | `kyxo.artifact.redacted` | kernel | tombstoned ref/event, reason class, authorizing grant | truth |
 | `kyxo.evidence.recorded` | verifier capability (via kernel) | verdict, target ref, verifier binding, criteria ref | truth |
 | `kyxo.approval.requested` | kernel policy stage | typed request payload (what/why/risk class), approver principal, deadline, escalation policy | truth |
 | `kyxo.approval.granted` / `.denied` / `.expired` | human capability / scheduler | decision, responsibility metadata (who consented — non-negotiable, spine §5) | truth |
-| `kyxo.checkpoint.cut` | kernel | journal position, state-snapshot ref, pending-invocation set, definition hash | truth |
+| `kyxo.effect.deduplicated` | kernel | effect key, original invocationId, original outcome. A re-issued effect the replay cache already holds; **always journaled** (A10/I14) | truth |
+| `kyxo.delivery.duplicate` | kernel | effect key, original invocationId, original outcome. A redelivery absorbed by the bounded reliability window; **always journaled** (A10/I14) | truth |
+| `kyxo.checkpoint.cut` | kernel | `cutSeq`, state-snapshot ref, pending-invocation set (with effect class + lease epoch), bounded dedup window, protected effects, grant states, definition hash, protocol version (§6.4) | truth |
 | `kyxo.cell.created` / `.archived` | kernel | cell key, owning grant, behaviour (strategy) ref | truth |
-| `kyxo.cell.forked` | kernel | parent cell + checkpoint, new definition hash, fork reason | truth |
+| `kyxo.execution.forked` | kernel | parent execution + checkpoint + `cutSeq`, **per-pending-invocation dispositions** (A1), new definition hash, any protected-effect replay override with its stated reason (§6.5) | truth |
 | `kyxo.cell.activated` / `.passivated` | scheduler | activation lifecycle (Orleans-style, operational only) | advisory |
-| `kyxo.grant.issued` | kernel | parent grant (lineage), rights, budget vector (tokens, usd, wall-clock, invocations, spawn depth/width, risk class) | truth |
-| `kyxo.grant.charged` | kernel (at commit) | amounts per dimension, charged invocationId | truth |
-| `kyxo.grant.exhausted` | kernel | dimension hit zero; triggers `budget-exceeded` suspensions | truth |
-| `kyxo.grant.revoked` | kernel | reason, revoking principal, affected bindings | truth |
-| `kyxo.policy.denied` | policy pipeline | stage id, rule ref, denied target, typed reason | truth |
-| `kyxo.policy.evaluated` | policy pipeline | full allow-path evaluation trace | advisory |
+| `kyxo.grant.issued` / `.attenuated` | kernel | parent grant (lineage), rights, budget vector (tokens, usd, wall-clock, invocations, spawn depth/width, risk class) | truth |
+| `kyxo.grant.reserved` | kernel (at admission) | reserved units per dimension, reserving invocationId. Durable **before** dispatch, so a crash cannot lose the hold (A2) | truth |
+| `kyxo.grant.settled` | kernel (at outcome commit) | actual units per dimension, settled invocationId; retires the matching reservation (A2) | truth |
+| `kyxo.grant.released` | kernel | released (unused) reservation units, invocationId, reason — failure, cancellation, denial, or remainder after a smaller settlement (A2) | truth |
+| `kyxo.grant.denied` | kernel | invocationId + typed reason (`revoked` \| `expired` \| `budget-exhausted` \| `revoked-mid-flight`). Admission-time refusal and the commit-time authority re-check both land here | truth |
+| `kyxo.grant.exhausted` | kernel | dimension has no remaining headroom (limit − reserved − settled = 0); triggers `budget-exceeded` suspensions | truth |
+| `kyxo.grant.revoked` | kernel | reason, revoking principal, affected bindings, `transitive` flag for lineage descendants | truth |
+| `kyxo.policy.denied` | policy pipeline | stage id, rule ref, denied target, typed reason, phase (`admission` \| `commit`) | truth |
+| `kyxo.policy.evaluated` | policy pipeline | full allow-path evaluation trace. **Plane is a policy-class knob** (amendment A12): advisory by default, **truth** in the regulated profile. A model-judge verdict that gates an effect is *always* truth-plane and always carries an input hash (§3.1 note) | advisory \| truth (profile) |
 | `kyxo.journal.trimmed` | kernel | trim boundary (checkpoint id), archive location | truth |
 | `kyxo.kind.registered` | kernel | Kind name, schema, storage version, served versions | truth |
 | `kyxo.kind.instance.created` / `.updated` / `.deleted` | controllers/strategies (via kernel) | kindRef, instanceId, validated diff/transition, spec+status refs | truth |
 
-Two placement decisions deserve justification. *Attempt events are advisory* because Temporal's history is explicitly an outcome log, not an attempt log (`ActivityTaskScheduled` alone exists while retrying; FACT, research/notes/durable-execution.md) — recording attempts in truth would couple journal growth to retry weather and put uncommitted effects in the fold path (§4). *Allow-path policy traces are advisory but denials are truth* because denials change what happened (they are outcomes with audit weight), while allow traces are high-volume diagnostics; both remain reconstructible since policy stages are deterministic over journaled inputs.
+Three placement decisions deserve justification.
+
+*Attempt events are advisory* because Temporal's history is explicitly an outcome log, not an attempt log (`ActivityTaskScheduled` alone exists while retrying; FACT, research/notes/durable-execution.md) — recording attempts in truth would couple journal growth to retry weather and put uncommitted effects in the fold path (§4).
+
+*Allow-path policy traces are a policy-class knob; denials are always truth* (amendment A12). Denials change what happened — they are outcomes with audit weight — while allow traces are high-volume diagnostics, so the default profile keeps them advisory and reconstructible (policy stages are deterministic over journaled inputs). But "reconstructible in principle" is not an audit record: a regulated deployment must be able to prove what was *permitted*, not only what was refused. The **regulated profile therefore promotes allow-path traces to the truth plane** as a declared policy class, with the journal-growth cost accepted explicitly rather than discovered later. Two cases are truth-plane in *every* profile: an allow decision that consumed a **model-judge verdict** gating an effect (journaled with a hash of the judge's inputs, so a non-deterministic gate is at least an attributable one — A12), and any allow whose stage is marked deny-class.
+
+*Dedup and duplicate-delivery absorptions are truth, never a counter* (amendment A10, invariant I14). The superseded reading — "duplicate dropped and counted on the advisory plane" — made the audit trail depend on a metric. Suppressing an *effect* is correct; suppressing the *record* that a duplicate arrived destroys the evidence that recovery behaved correctly. Every absorption emits `kyxo.effect.deduplicated` or `kyxo.delivery.duplicate` naming the original invocation and its outcome. The same rule governs content addressing: **the CAS dedups bytes, the journal never dedups records** (§7.1).
 
 ### 3.2 Watch streams
 
@@ -218,9 +243,9 @@ The payoff of this split is future-proofing: a team that wants `Experiment`, `In
 
 | Property | Truth plane (journal) | Advisory plane (live streams) |
 |---|---|---|
-| Content | Committed outcomes, transitions, charges, evidence, approvals | Token deltas, attempt progress, heartbeats, allow-path policy traces, activation lifecycle |
+| Content | Committed outcomes, transitions, budget reservations/settlements/releases, evidence, approvals, dedup and duplicate-delivery absorptions | Token deltas, attempt progress, heartbeats, activation lifecycle, and allow-path policy traces *in the default profile only* (A12: the regulated profile moves them to truth; judge-gated allows are always truth) |
 | Ordering | Total per cell (`seq`) | Best-effort per stream |
-| Delivery | Exactly-once landing (at-least-once ingress + dedup, §7.1) | At-least-once or lossy; truncatable; bounded buffers |
+| Delivery | Exactly-once *effect* landing (at-least-once ingress + bounded reliability dedup, §7.1); absorbed duplicates are themselves journaled | At-least-once or lossy; truncatable; bounded buffers |
 | Retry visibility | Never — outcome log, not attempt log | Always — partial output of failed attempts flows, marked with retry sentinels |
 | Retention | Until snapshot+trim archival (§5.2) | Ephemeral; bounded ring buffers |
 | Recovery role | The recovery substrate | None. Never consulted for recovery |
@@ -259,7 +284,7 @@ Observability (spine §2) is a projection of the truth plane — OTel export inc
 
 Evidence is unanimous that single-tier event logs fail under AI payloads: Temporal's hard caps (51,200 events / 50 MB history, 2 MB payloads, base64 tax on binary, image outputs rejected outright by the Pydantic AI integration) forced External Storage claim-checks with "AI agent conversations" as the named motivation; DBOS documents "keep step outputs small, use S3 + pointer"; Workflow Streams' carried state is the entire in-memory log; Claude Code spills tool results over 25k tokens to files (all FACT: research/notes/durable-execution.md, research/notes/anthropic-claude-code-agent-sdk.md). Every one of these is a retrofit of the same missing primitive.
 
-Kyxo makes the split constitutive. The journal stores envelopes; payload bytes above a small inline threshold (V1: 4 KB canonical JSON — tunable, conformance-tested) live in the content-addressed store as Artifacts (kernel object 5), referenced by hash. Inline payloads below the threshold still carry `payloadHash`, so the integrity and redaction machinery (§2.3) is uniform. Because Artifacts are content-addressed and immutable with provenance and labels, cross-boundary passing is by reference at near-zero cost — the Mach/L4 lesson the spine encodes (spine §3 object 5). Storage V1 is SQLite/JSONL journal + file CAS behind a conformance-tested storage interface (spine §8; LangGraph's published checkpointer conformance suite is the precedent — SOURCE-CODE OBSERVATION, research/notes/langgraph.md).
+Kyxo makes the split constitutive. The journal stores envelopes; payload bytes above a small inline threshold (V1: 4 KB canonical JSON — tunable, conformance-tested) live in the content-addressed store as Artifacts (kernel object 5), referenced by hash. Inline payloads below the threshold still carry `payloadHash`, so the integrity and redaction machinery (§2.3) is uniform. Because Artifacts are content-addressed and immutable with provenance and labels — including the **label/kind field** amendment A10 adds to `ArtifactMeta`, so a consumer can tell a compiled context view from a model output from an evidence bundle without parsing bytes — cross-boundary passing is by reference at near-zero cost (the Mach/L4 lesson the spine encodes, spine §3 object 5). One consequence is load-bearing and easy to get wrong: content addressing means two invocations that produce identical bytes share one blob. That dedups **storage**, and nothing else. Each producing invocation still journals its own `kyxo.artifact.produced` event with its own provenance (A10/I14); first-writer-wins provenance was a real prototype defect, not a hypothetical (§7.1). Storage V1 is SQLite/JSONL journal + file CAS behind a conformance-tested storage interface (spine §8; LangGraph's published checkpointer conformance suite is the precedent — SOURCE-CODE OBSERVATION, research/notes/langgraph.md).
 
 ### 5.2 Snapshot + trim as first-class compaction
 
@@ -270,7 +295,7 @@ Kyxo compaction is therefore **snapshot + trim, first-class, no ceremony**:
 1. The kernel cuts a Checkpoint for the cell (§6.4) — an ordinary `kyxo.checkpoint.cut` event.
 2. The journal prefix strictly before the checkpoint's position becomes trimmable: moved to cold archive per retention policy (default: archive, not delete — the hash chain spans archive and hot tier; the chain head of the hot tier is anchored in the checkpoint).
 3. `kyxo.journal.trimmed` records the boundary and archive location.
-4. Dedup/idempotency state and pending-invocation state survive trims because they live in the checkpoint composite, not in trimmed prefix scans — the Workflow Streams TTL lesson generalized (§7.1).
+4. Reliability state survives trims because it lives in the checkpoint composite, not in trimmed prefix scans — the Workflow Streams TTL lesson generalized (§7.1). Precisely (amendment A11): the **bounded dedup window**, the **protected-effect set** and the **pending-invocation set** are checkpoint fields; the **replay cache** is part of the folded state snapshot and carries its own, separately-governed retention. Trimming the journal must never be able to silently shorten either — a trim that outran the dedup window would resurrect duplicates, and a trim that dropped protected effects would let a fork redo an irreversible one.
 
 Vocabulary guard: this is *journal* compaction, a kernel mechanic. *Context* compaction — summarizing conversation history for a model's window — is an entirely different operation: an event with pluggable executors (client-side, harness, or provider-side, since Anthropic now ships server-side `compact_20260112`; FACT, research/notes/anthropic-claude-code-agent-sdk.md), owned by the context-management system (doc 09). The two never share machinery; conflating them is ADK's `compaction`-as-EventAction ambiguity, which we deliberately avoid.
 
@@ -296,17 +321,39 @@ A Checkpoint (kernel object 8) is a named consistent cut of one cell:
 
 ```
 Checkpoint = {
-  journalPosition,        // seq of the last folded event
-  stateSnapshot,          // CAS ref: the folded cell state
-  pendingInvocations,     // in-flight invocation set: ids, idempotency keys,
-                          //   lease epochs, dedup-window state
-  definitionHash          // strategy hash + config/prompt/model pin lineage
+  id,                     // checkpoint identity
+  executionId,            // the lineage this cut belongs to
+  cutSeq,                 // the consistency boundary: last COMMITTED seq folded in
+  stateSnapshot,          // CAS ref: folded cell state, artifacts, replay cache, evidence
+  pending: [{             // in-flight invocations at the cut — one entry each
+    id,
+    effectKey,            // content-inclusive effect identity (A1)
+    effectClass,          // pure | local | external-idempotent
+                          //   | external-compensatable | external-irreversible
+    leaseEpoch,           // fencing token; stale-epoch commits are rejected (§7.2)
+    state                 // dispatched | suspended | uncertain
+  }],
+  dedupWindow,            // BOUNDED reliability window only — TTL >= retry horizon.
+                          //   NOT the replay cache (A11); that lives in stateSnapshot
+  protectedEffects,       // landed irreversible effects a fork may never silently redo
+  grants,                 // grant states: limits, reserved, settled, revoked (A2/A8)
+  definitionHash,         // strategy hash + config/prompt/model pin lineage
+  protocolVersion         // date-versioned kernel protocol the cut was written under
 }
 ```
 
-Each component earns its place from a documented failure or success elsewhere. *Snapshot alone is insufficient*: LangGraph needed `pending_writes` as a write-ahead side channel to avoid re-running successful parallel branches after a mid-step failure — their own correction toward "snapshot + pending effect log as one composite" (SOURCE-CODE OBSERVATION + the note's implication #3, research/notes/langgraph.md). *Definition identity is mandatory*: MAF scopes checkpoints to definitions (spine §3 object 8), and Temporal's `RunState` — valid only against an identical tool graph — is the failure mode when definition identity is implicit (FACT, research/notes/durable-execution.md). *Pending invocations + dedup state* make the checkpoint the recovery unit for §7 semantics without journal-prefix scans (ADK's resume-by-full-log-scan, with its own TODO admitting checkpoints should be first-class, is the counterexample — SOURCE-CODE OBSERVATION, research/notes/google-adk.md). Checkpoints are portable across processes: state-transfer migration is the distribution story (spine §8), commercially proven by Cursor's handoff (spine §3 object 8).
+Each component earns its place from a documented failure or success elsewhere. *Snapshot alone is insufficient*: LangGraph needed `pending_writes` as a write-ahead side channel to avoid re-running successful parallel branches after a mid-step failure — their own correction toward "snapshot + pending effect log as one composite" (SOURCE-CODE OBSERVATION + the note's implication #3, research/notes/langgraph.md). *Definition identity is mandatory*: MAF scopes checkpoints to definitions (spine §3 object 8), and Temporal's `RunState` — valid only against an identical tool graph — is the failure mode when definition identity is implicit (FACT, research/notes/durable-execution.md). *Pending invocations* make the checkpoint the recovery unit for §7 semantics without journal-prefix scans (ADK's resume-by-full-log-scan, with its own TODO admitting checkpoints should be first-class, is the counterexample — SOURCE-CODE OBSERVATION, research/notes/google-adk.md). Checkpoints are portable across processes: state-transfer migration is the distribution story (spine §8), commercially proven by Cursor's handoff (spine §3 object 8).
 
-### 6.5 Fork-from-checkpoint as the primary repair verb; version-by-data
+Four fields exist because of phase-2 findings and did not appear in the pre-review composite:
+
+- **`cutSeq` is a committed boundary, not a position marker.** The cut names the last *committed* seq folded into the snapshot. A checkpoint therefore never covers staged-but-uncommitted work — staging is by construction non-durable — and `cutSeq` is always strictly less than the seq of the `checkpoint.cut` event that records it (invariant I9).
+- **`pending` carries the effect class and the lease epoch per invocation**, not just ids. Recovery and fork both branch on *declared effect class* to decide whether re-execution is admissible; a pending set that records only identity forces the kernel to guess, which is precisely how a non-idempotent effect gets double-applied (A1, §7.5).
+- **`dedupWindow` is bounded** (amendment A11). The pre-review composite said "dedup state", and the phase-1 prototype implemented that as an unbounded set — which is what made graph delta-execution look free. Bounded reliability dedup and the content-keyed replay cache are two mechanisms with two contracts (§7.1); only the former is a checkpoint field, and its TTL is bound to the retry horizon.
+- **`protectedEffects`** records landed irreversible effects so that a fork cannot silently redo one. Without it, an inherited irreversible effect is indistinguishable from a cache hit at the caller — a fork would either re-charge the credit card or report a parent's charge as its own success (A1; the falsification is recorded against the fork suite).
+
+`grants` carries full grant *state* — limits, reserved, settled, revoked — because reserve/settle accounting (A2) must survive a crash: a reservation that is lost on restart is budget that can be spent twice. The stored value is state, not authority; restoring a checkpoint does not resurrect a grant revoked after the cut, and it hands back no usable authority, since authority is a handle the kernel mints, never an id in a record (A8).
+
+### 6.5 Resume continues a lineage, fork branches one; version-by-data
 
 **Evidence.** DBOS `forkWorkflow(id, startStep)` is both the mass-recovery tool and the documented AI debugging tool ("rerun the misbehaving step under the exact conditions… then re-test with a fixed prompt"), and it *replaced* their time-travel debugger; Restate 1.6 ships restart-from-any-journal-point; Temporal's Reset forks with history copied to a chosen event; LangGraph forks checkpoints (`source: "fork"`) into diverging branches of a thread tree; Claude Code forks sessions by transcript copy (FACT / SOURCE-CODE OBSERVATION across research/notes/durable-execution.md, research/notes/langgraph.md, research/notes/anthropic-claude-code-agent-sdk.md).
 

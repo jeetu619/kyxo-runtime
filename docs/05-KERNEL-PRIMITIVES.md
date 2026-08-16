@@ -3,7 +3,20 @@
 > **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
 > binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
 > full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A4, A8, A10, A11. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Applied here:** A2 (reserve/settle/release replaces decrement-at-commit, §2.3, §2.7, §7),
+> A3 (guarantee grades sealed on the Binding, §2.2), A4 (frozen kernel facade, §3.3),
+> A8 (handle-identity authority; non-resolvable journal grant references, §2.2, §2.7),
+> A10 (suspension `origin`, journaled cancellation requests, artifact provenance per producing
+> invocation, ArtifactMeta label, fresh cells for children — §2.3, §2.5, §2.6, §3.2),
+> A11 (reliability dedup window ≠ content-keyed replay cache, §2.3, §2.5, §2.8),
+> plus the `uncertain` invocation state and the executable Checkpoint shape from
+> `prototypes/kernel-semantics/src/` (§2.3, §2.8). **Outstanding:** none.
+> Where this document conflicts with the Amendment log, **the amendment log governs**.
+>
+> **Executable semantics supersede prose.** `prototypes/kernel-semantics/src/kernel.ts`,
+> `types.ts` and `invariants.ts` are the normative reference for object shapes and lifecycle;
+> where this document's narrative and that code disagree, the code is correct and this
+> document is the defect.
 
 
 Status: derived from `research/DESIGN-SPINE.md` §2–§3 (pre-adversarial-review). Claim labels follow
@@ -76,16 +89,19 @@ The object graph, for orientation:
 ```mermaid
 flowchart LR
     K[Kind<br/>registered userland types] -.->|schemas for| A
-    C[Capability<br/>identity + manifest] -->|negotiation seals| B[Binding]
-    G[Grant<br/>authority + budget] -->|attached at bind| B
-    G -->|attenuate on delegation| G
+    C[Capability<br/>identity + manifest] -->|negotiation seals| B["Binding<br/>+ guarantee grades (A3)"]
+    G["Grant<br/>handle = authority (A8)<br/>rights + budget"] -->|handle attached at bind| B
+    G -->|attenuate on delegation<br/>child ≤ parent remaining| G
     B -->|one use| I[Invocation]
+    I -->|"reserve at admission /<br/>settle + release at outcome (A2)"| G
     I -->|journals| E[Event]
-    I -->|produces / consumes| A[Artifact<br/>content-addressed]
-    E -->|payloads by reference| A
+    I -->|produces / consumes| A["Artifact<br/>content-addressed + label"]
+    E -->|"payloads by reference<br/>(grant refs non-resolvable)"| A
     I -->|scheduled inside| CL[Cell<br/>single-writer scope]
     CL -->|consistent cut| CP[Checkpoint]
     CP -->|journal position| E
+    CP -->|"resume: continue this lineage<br/>(cut + committed suffix)"| CL
+    CP -->|"fork: branch a new lineage<br/>(cut only + dispositions)"| CL
 ```
 
 ### 2.1 Capability
@@ -144,9 +160,25 @@ authority (that is Grant). A capability that merely exists confers nothing.
 
 **Definition.** The sealed result of capability negotiation: capability identity + the chosen
 dialect/tier set (intersection of two-sided declared feature sets) + the attached Grant + the
-resolved policy route. Sealed at bind time: unknown declared features are ignored
-(must-ignore), use of an unnegotiated feature is a hard error (unsolicited-use-is-error), and
-GREASE values are injected from v0 to keep every implementation's ignore path exercised.
+resolved policy route + a **guarantee grade per policy-relevant property**. Sealed at bind
+time: unknown declared features are ignored (must-ignore), use of an unnegotiated feature is a
+hard error (unsolicited-use-is-error), and GREASE values are injected from v0 to keep every
+implementation's ignore path exercised.
+
+**Guarantee grades (amendment A3).** Sealing a feature set is not the same as guaranteeing it
+holds in the world. Every Binding therefore carries, and journals, a grade per policy-relevant
+property: `enforced` (kernel-mediated — the effect cannot occur except through kernel
+mediation), `observed` (post-hoc reconciliation against journaled evidence or probe results),
+`declared` (manifest-trusted; the publisher's word). Kyxo claims `enforced` only below the
+mediation waterline — local tools, self-hosted models, sandboxed effects — and `observed`/
+`declared` above it, for delegated vendor harnesses and provider-side execution domains. The
+grade vocabulary is normative in 06-CAPABILITY-SPEC.md §5.7a; it is a Binding field, not
+prose. A Binding that cannot state a grade for a property it gates on is a defect.
+
+**Authority is a handle, not a string (amendment A8).** A Binding references its Grant by
+holding a kernel-minted handle. Userland never presents a raw identifier for resolution, and
+the grant reference recorded on journal events is a **non-resolvable** identifier: it names
+the authority for audit and attribution, and cannot be exchanged for it. See §2.7.
 
 **The six questions.**
 1. *Why does this need to exist?* Security and accounting attach here. The moment of converting a
@@ -189,9 +221,25 @@ Grant it references. Not discovery: registries and advertisement events are stdl
 ### 2.3 Invocation
 
 **Definition.** One use of a Binding. Async-first task lifecycle with a **closed transition
-algebra** extending A2A's states; carries an idempotency key, correlation ID, causation ID, and
-grant reference. Suspensions are typed payloads (suspend/resume schemas), generalizing A2A's
-auth-required escalation chaining to approvals and budget exhaustion.
+algebra** extending A2A's states; carries a content-inclusive effect key (the idempotency key:
+capability + step + argument hash, lineage-scoped per amendment A1), correlation ID, causation
+ID, and a non-resolvable grant reference. Suspensions are typed payloads (suspend/resume
+schemas) and carry an `origin` discriminator — `provider | policy | kernel` (amendment A10) —
+because the three have different resume semantics: a provider suspension re-enters the
+provider, a policy suspension re-evaluates the stage that raised it, and a kernel suspension
+(budget exhaustion) is resolvable only by re-grant. Provider-raised suspensions generalize
+A2A's auth-required escalation chaining; approval and budget exhaustion are the policy- and
+kernel-origin cases.
+
+**The `uncertain` state.** An invocation whose external effect may or may not have landed —
+the process died between dispatch and outcome, or a lease expired mid-flight — enters
+`uncertain`. It is neither interrupted nor terminal: it is a third class, *unresolved*, and it
+exists because the alternative is guessing. Resolution is an explicit, journaled disposition:
+`probe` (ask the capability whether the effect landed — only for `probeable` capabilities),
+`adopt-landed` (an authority asserts it landed), `compensate` (run the declared compensation),
+or `abandon-failed` (an authority asserts it did not land). A probe that answers `unknown`
+leaves the invocation `uncertain`; the kernel never manufactures a terminal state it cannot
+justify (executable form: `Kernel.resolveUncertainty`, invariant I15).
 
 ```mermaid
 stateDiagram-v2
@@ -199,10 +247,10 @@ stateDiagram-v2
     submitted --> working
     submitted --> rejected
     submitted --> canceled
-    working --> input_required : interrupted class
-    working --> auth_required : interrupted class
-    working --> approval_required : interrupted class
-    working --> budget_exceeded : interrupted class
+    working --> input_required : interrupted (origin=provider)
+    working --> auth_required : interrupted (origin=provider)
+    working --> approval_required : interrupted (origin=policy)
+    working --> budget_exceeded : interrupted (origin=kernel)
     input_required --> working : typed resume
     auth_required --> working : typed resume
     approval_required --> working : typed resume
@@ -211,17 +259,29 @@ stateDiagram-v2
     auth_required --> canceled
     approval_required --> rejected
     budget_exceeded --> failed
+    working --> uncertain : unresolved class<br/>(crash / lease expiry after dispatch)
+    uncertain --> completed : probe=landed | adopt-landed
+    uncertain --> failed : probe=not-landed | compensate | abandon-failed
+    uncertain --> uncertain : probe=unknown (stays explicit)
     working --> completed : terminal
     working --> failed : terminal
     working --> canceled : terminal
     working --> rejected : terminal
 ```
 
+Cancellation is journaled twice: the **request** (`invocation.cancel.requested`) and the
+honored transition, if one occurs (amendment A10). A cancellation that is requested and never
+honored is exactly the case an audit must be able to see.
+
 **The six questions.**
-1. *Why does this need to exist?* Accounting and recovery hang on it: budgets are decremented at
-   invocation commit, the exactly-once illusion (at-least-once delivery + kernel-owned dedup
-   windows keyed by idempotency key) is enforced here, and lineage (correlation/causation) makes
-   the journal auditable.
+1. *Why does this need to exist?* Accounting and recovery hang on it: budget is **reserved at
+   admission and settled at outcome** (amendment A2 — reservation happens before dispatch so a
+   crash cannot lose the hold; the unused remainder is released, and every step is a distinct
+   journal event: `grant.reserved`, `grant.settled`, `grant.released`), the exactly-once
+   illusion (at-least-once delivery + a kernel-owned **reliability dedup window** keyed by the
+   content-inclusive effect key) is enforced here, and lineage (correlation/causation) makes
+   the journal auditable. That reliability window is *not* the content-keyed replay cache used
+   for delta execution: two mechanisms, two contracts (amendment A11 — see §2.8).
 2. *Can it be represented using another primitive?* Not fully. Its history is Events, but the
    *closed* algebra is an enforcement property: a userland lifecycle is a naming convention any
    strategy can violate, and A2A demonstrates the cost of leaving transitions spec-implied
@@ -237,7 +297,10 @@ stateDiagram-v2
    point, hence no place to charge budgets, gate verification, or deduplicate retries.
 6. *Could a future paradigm fit within it?* Yes. New suspension *kinds* arrive as typed payloads
    on the existing interrupted states, not as new states — a deliberate divergence from A2A's
-   state-machine extensions, flagged in §7.
+   state-machine extensions, flagged in §7. The one exception is instructive and already
+   spent: `uncertain` is a genuinely new *class* (neither interrupted nor terminal), so it
+   arrived the expensive way the closed algebra prescribes — by revving the kernel protocol
+   version (`2026-08-16`), not by widening an existing state's meaning.
 
 **Prior art.**
 
@@ -258,6 +321,9 @@ stateDiagram-v2
 **Deliberately does NOT include.** Retry policy (a policy-pipeline concern), progress
 percentages (advisory-plane projections), tool schema semantics (manifest), planning of any
 kind. The kernel schedules invocations; it never plans them (research/notes/durable-execution.md).
+It also does not include automatic retry of an effect whose class forbids it: an
+`external-compensatable` or `external-irreversible` effect with an unknown outcome is never
+re-executed on the kernel's initiative — it becomes `uncertain` and waits for a disposition.
 
 ### 2.4 Event
 
@@ -310,9 +376,17 @@ because prompts change weekly and Temporal-style command matching taxes exactly 
 ### 2.5 Artifact
 
 **Definition.** Content-addressed, immutable payload plus provenance: producing invocation,
-inputs, and structural labels (taint/integrity/confidentiality) that propagate through
-derivation. The kernel's crossing primitive: passing an Artifact across any boundary passes a
-reference, never a copy.
+inputs, a **label/kind field** on the metadata record (amendment A10 — the label is what makes
+an artifact routable and policy-visible without opening it), and structural labels
+(taint/integrity/confidentiality) that propagate through derivation. The kernel's crossing
+primitive: passing an Artifact across any boundary passes a reference, never a copy.
+
+**Content addressing dedups bytes; it never dedups provenance (amendment A10).** When two
+invocations produce identical content, the content-addressed store holds one blob — and the
+journal still records `artifact.produced` **once per producing invocation**, with that
+invocation's own provenance. Collapsing the second production into the first was a real
+prototype bug: it made the second invocation's output un-attributable and broke the commit
+gate's ability to say which run's evidence covered which artifact (invariant I8).
 
 **The six questions.**
 1. *Why does this need to exist?* Three required properties meet here: coordination (zero-copy
@@ -327,7 +401,12 @@ reference, never a copy.
    paradigm-free. The *label vocabulary* (prompt-injection taint) reflects today's threat model
    but labels are extensible data.
 5. *Would removing it reduce expressiveness?* Yes: no provenance means verification gates have
-   nothing to check; no content addressing means no memoization, no cache keys, no dedup.
+   nothing to check; no content addressing means no content keys, hence neither of the two
+   distinct caching mechanisms (amendment A11): the bounded **reliability dedup window** that
+   suppresses duplicate delivery of the same effect, and the content-keyed **replay cache**
+   that delta execution reads. They are separate contracts and must not be conflated — the
+   window is bounded by a TTL ≥ the retry horizon and is a correctness device; the replay
+   cache is indefinite, policy-governed, and an optimization.
 6. *Could a future paradigm fit within it?* Yes — any paradigm's outputs are bytes with
    provenance. Modality changes (audio, video, weights-diffs) are new media types, not new
    objects.
@@ -392,6 +471,13 @@ activation; journal partitioned per cell.
 > **Implication** — Cell admitted; the scheduler (§3.2) owns its turns.
 > **Confidence** — HIGH.
 
+**Child invocations run in fresh cells (amendment A10).** Spawn semantics are normative, not
+advisory: a delegated invocation never re-enters its parent's cell. Re-entrancy into a
+single-writer scope is a deadlock by construction, and the prototype found it the way such
+things are found — by deadlocking. Designing it away (fresh cell per child, results returned
+through the kernel's delegation channel) is the fix; documenting the hazard would not have
+been.
+
 **Deliberately does NOT include.** A process, container, or thread — execution environments are
 leasable capabilities, and a cell may span environment restarts. Not an agent (an agent is a
 configuration *placed in* a cell). No default reentrancy. Not a distribution unit: V1 is
@@ -404,9 +490,49 @@ research/notes/microsoft-autogen-sk-agent-framework.md).
 **Definition.** An unforgeable, attenuable, revocable authority reference carrying both rights
 (what may be invoked, at what risk class) and quantitative budget (tokens, money, wall-clock,
 invocations, spawn depth/width). Grants form a lineage tree; delegation mints a child that is
-mandatorily ≤ its parent; revocation is transitive over the subtree; the kernel decrements
-budgets atomically at invocation commit. Object-capability discipline throughout: no ambient
-authority, and interposition is invisible to the holder.
+mandatorily ≤ its parent; revocation is transitive over the subtree. Object-capability
+discipline throughout: no ambient authority, and interposition is invisible to the holder.
+
+**Budget lifecycle: reserve at lease, settle at outcome, release the remainder (amendment
+A2).** Decrement-at-commit is retired. The normative model has three moments, each its own
+journal event kind:
+
+| Moment | Event | What it does |
+|---|---|---|
+| **Admission** (before dispatch) | `grant.reserved` | Reserves the invocation's declared or estimated cost against every grant in the chain. Reservation is durable *before* the effect is attempted, so a crash cannot lose the hold, and parallel siblings cannot mutually overdraft. Insufficient remainder is refused here (`grant.denied`), before spend. |
+| **Outcome commit** | `grant.settled` | Settles the actual metered cost atomically with the outcome event, in the same commit record. |
+| **Outcome commit** | `grant.released` | Releases the unused portion of the reservation — and the *whole* reservation when the invocation failed, was canceled, or was denied at the commit gate. |
+
+Remaining budget is therefore `limit − reserved − settled` on every grant in the chain, and
+attenuation computes a child's limits from the parent's *remaining* — read fresh at delegation
+time, never from a captured snapshot (the prototype's first attempt overshot exactly there).
+Federation is the same mechanism with lagged settlement, not an exception to it.
+
+**Authority is handle identity, not knowledge of a name (amendment A8).** A Grant is exercised
+by presenting a **kernel-minted handle object**; the kernel keeps a private registry of the
+handles it minted and accepts nothing else. Possession of the handle *is* the authority.
+Consequences, all normative:
+
+- Knowing a grant's id string confers nothing. Reading an id off a journal event,
+  reconstructing the handle's shape, or copying the handle class yields an object the kernel
+  refuses (`AuthorizationError`), because none of those objects are in its registry.
+- **Journal grant references are non-resolvable identifiers.** They exist for attribution and
+  audit — "this effect was charged to that authority" — and cannot be exchanged for the
+  authority. The truth plane is therefore safe to export, mirror, and show to an operator
+  without leaking privilege.
+- A guard token, mint symbol, or shared secret is *not* an acceptable substitute. The
+  prototype's first design exported a `KERNEL_MINT` symbol so handles could be constructed
+  where needed; because any module could import the symbol, any module could mint authority.
+  Identity-based registration is what closes that hole (falsified design F-2).
+- Revocation and expiry are re-checked at time of use, not only at issue: a grant revoked
+  mid-flight fails the invocation at the commit barrier, and the world-effect record is still
+  journaled while the artifacts are *not* promoted — the effect happened, the benefit is
+  withheld.
+
+*(The original text read "the kernel decrements budgets atomically at invocation commit" and
+"authority is an unforgeable reference" without specifying the reference's form. Both are
+superseded by A2 and A8; the atomicity argument that motivated decrement-at-commit is retained
+below because it is exactly the argument that forces reservation to be durable pre-dispatch.)*
 
 **The six questions.**
 1. *Why does this need to exist?* It *is* the security property, and half the accounting
@@ -416,8 +542,11 @@ authority, and interposition is invisible to the holder.
    database consulted by policy — but ACL evaluation centralizes and does not attenuate cleanly
    under delegation-heavy workloads (INFERENCE/MEDIUM,
    research/notes/prior-art-negotiation-extension.md). The budget half cannot be userland at
-   all: decrement must be atomic with journal commit or double-spending across concurrent
-   invocations is unpreventable. A userland ledger reading the journal is always one race behind.
+   all: reservation and settlement must be atomic with journal commit or double-spending across
+   concurrent invocations is unpreventable. A userland ledger reading the journal is always one
+   race behind. (This atomicity argument originally justified decrement-at-commit; under A2 it
+   justifies something stronger — the *reservation* must also be journaled atomically, before
+   dispatch, or a crash between admission and effect leaves budget unaccounted.)
 3. *Fundamental or convenient?* Rights: fundamental, on four-way independent convergence
    (seL4, Zircon, Cap'n Proto, E). Budgets-as-attenuated-quantitative-rights: fundamental by
    argument, with limited direct prior art — this is our one genuinely novel kernel object and is
@@ -444,9 +573,12 @@ authority, and interposition is invisible to the holder.
 > integer in ADK, a single function-invocation budget key in MAF's harness (SOURCE-CODE
 > OBSERVATION, research/notes/microsoft-autogen-sk-agent-framework.md).
 > **Interpretation** — authority-as-reference is settled engineering; metered authority is the
-> unclaimed extension the mission exists to claim.
-> **Implication** — Grant admitted; doc 08 specifies decrement/refund semantics and the
-> budget-exceeded escalation chain; the checkpoint-vs-revocation tension is an open issue (§7).
+> unclaimed extension the mission exists to claim. Note that all four cited systems make
+> authority *possession of a kernel object*, never knowledge of a name — which is precisely
+> what amendment A8 restores to our own reference kernel.
+> **Implication** — Grant admitted; doc 08 specifies the reserve/settle/release event semantics
+> and the budget-exceeded escalation chain; the checkpoint-vs-revocation tension is resolved by
+> fork-time re-resolution (§7).
 > **Confidence** — HIGH on rights; MEDIUM on budgets (novelty risk, not mechanism risk).
 
 **Deliberately does NOT include.** Principal identity and authentication — those live at
@@ -456,10 +588,42 @@ policy language (pipeline). No price schedules or billing (userland over account
 
 ### 2.8 Checkpoint
 
-**Definition.** A named consistent cut of a cell: journal position + state snapshot + pending
-invocations (including pending typed suspensions), bound to definition identity (strategy hash +
-config lineage), portable across processes. Fork-from-checkpoint is the primary repair and
-upgrade verb.
+**Definition.** A named consistent cut of an execution's cell: journal position + state snapshot
++ pending invocations (including pending typed suspensions and unresolved `uncertain` ones),
+bound to definition identity (strategy hash + config lineage), portable across processes.
+Fork-from-checkpoint is the primary repair and upgrade verb.
+
+**The record shape** (normative; executable form in
+`prototypes/kernel-semantics/src/types.ts`):
+
+| Field | Meaning |
+|---|---|
+| `id`, `executionId` | Checkpoint identity and the lineage it cuts. |
+| `cutSeq` | The consistency boundary: the last **committed** journal sequence folded into this cut. A checkpoint never references an uncommitted position (invariant I9). |
+| `stateSnapshot` | An Artifact reference to the folded cell state — an accelerator, never a second source of truth. Snapshot-fold must equal journal-fold at `cutSeq` (invariant I20). |
+| `pending` | Every invocation in flight at the cut: `{ id, effectKey, effectClass, leaseEpoch, state }`. `effectClass` is what makes disposition decidable — the kernel refuses to re-lease an unresolved `external-irreversible` pending without an explicit override. |
+| `dedupWindow` | The bounded **reliability** window (amendment A11) — effect keys whose duplicate delivery must be suppressed within the retry horizon. Explicitly *not* the content-keyed replay cache. |
+| `protectedEffects` | Landed irreversible effects that a fork may never silently redo. Overriding one requires a journaled `allowReplayOfProtected` reason. |
+| `grants` | The grant states at the cut (limits, `reserved`, `settled`, revocation, expiry) — the budget ledger travels with the cut. |
+| `definitionHash` | Strategy/config identity, so a resumed or forked lineage can refuse an incompatible definition. |
+| `protocolVersion` | The record-format version the cut was written under. |
+
+**Resume continues a lineage; fork branches one.** These are different verbs with different
+folds, and conflating them was the phase-1 incoherence this shape exists to fix:
+
+- `resume(checkpoint)` keeps the execution identity and folds the snapshot **plus the committed
+  suffix after the cut**. The checkpoint is an accelerator; the journal remains authoritative.
+- `fork(checkpoint)` mints a **new** execution that folds the parent journal **only up to
+  `cutSeq`**. Post-cut parent events are not inherited, so a child can never report a parent's
+  later outcome as its own. Everything crossing the cut is marked *inherited*, and an inherited
+  effect of a class that is unsafe to auto-retry refuses loudly rather than presenting as a
+  cache hit.
+- Fork requires an **explicit journaled disposition for every pending invocation** (amendment
+  A1): `adopt`, `re-lease`, `compensate`, or `abandon`. A missing disposition fails the fork;
+  it is not defaulted.
+- Grant handles are **re-resolved at fork time**: a grant revoked after the cut stays revoked in
+  the child (petname semantics — the resolution of the revocation-vs-checkpoint tension noted in
+  §7).
 
 **The six questions.**
 1. *Why does this need to exist?* Recovery. Only the journal owner can cut consistently; a
@@ -595,7 +759,11 @@ pipeline only requires and checks their Evidence).
 
 **Definition.** Kernel dispatch of invocations within and across cells: cell write-turns, leases
 with visibility timeouts on every external effect, timeouts, deadline enforcement, and
-cancellation propagation along the causation/grant tree.
+cancellation propagation along the causation/grant tree. Child invocations are dispatched into
+**fresh cells** (§2.6, amendment A10). Cancellation **requests** are journaled when they are
+made, not only when they are honored (amendment A10): a request that is never honored — because
+the capability declared `cancellable: false`, or because the effect had already landed — is a
+fact an operator must be able to read off the truth plane.
 
 **The six questions.** (1) *Why does this need to exist?* Coordination and accounting:
 single-writer turns must be arbitrated by the entity that owns the journal, and deadlines/leases
@@ -614,6 +782,37 @@ priority) is pluggable above the mechanical floor; Orleans' pluggable placement 
 distribution (single-node V1; LangGraph's version-vector task planner and MAF's superstep runner
 show sophisticated scheduling can live in *strategies* over a simpler kernel floor — SOURCE-CODE
 OBSERVATION, research/notes/langgraph.md, research/notes/microsoft-autogen-sk-agent-framework.md).
+
+### 3.3 The frozen facade (amendment A4)
+
+The nine objects are only as portable as the surface through which userland touches them.
+Amendment A4 promotes that surface — **the facade, not merely the wire schemas** — to a Wave-0
+frozen, versioned, conformance-tested contract. Two halves, deliberately asymmetric:
+
+- **Host/strategy-facing (`KernelApi`, `HarnessCtx`).** The verb list is normative and closed
+  for the freeze: `bind`, `invoke`, `resume` (with a re-grant option), `cancel`, `attenuate`,
+  `getGrant` (handle-shaped per A8), `charge`, `storeArtifact` / `readArtifact`, scoped journal
+  read, `checkpoint`, `createCell`, discovery (`listCapabilities`), the Kind verbs
+  (`registerKind` / `createKindObject` / `getKindObject` / `watch`), and an **injected clock**.
+  The clock is a verb because a strategy that reads a wall clock is a strategy whose replay
+  diverges. The list was decided by what four prototypes demonstrably needed, not by what
+  seemed complete; 06-CAPABILITY-SPEC.md §8a is the normative statement.
+- **Capability-facing (`InvokeCtx`).** *Data only.* A capability provider receives an
+  invocation id, an execution id, an injected `now`, an attempt counter, the request, an
+  optional resume payload, and a read-only cancellation signal — and **no kernel handle**. Its
+  single channel to durable truth is yielding typed **effect proposals**, which the kernel
+  validates, stages, and commits or rejects as a unit. The commit barrier is structural rather
+  than cooperative: a capability cannot append to the journal, mint authority, promote an
+  artifact, or charge a grant, because it holds no object that could.
+
+*(Phase-1 handed every capability a live kernel handle, and 06-CAPABILITY-SPEC.md §8 change #9
+described that handle as the provider's authority. That is superseded: the ocap reasoning was
+right and the mechanism was wrong — a handle you are given to call back through is still ambient
+authority relative to the commit point. Retained here because the analysis that forced the
+change is instructive.)*
+
+Replaceability of the reference implementation (ADR-010) is scoped to the execution record until
+facade conformance fixtures exist; the facade freeze is what removes that qualifier.
 
 ---
 
@@ -807,9 +1006,9 @@ strategies/plugins; "protocol edge" = adapters to external wire contracts.
 | 18 | Multi-agent architecture | Any orchestration strategy coordinating multiple cells via delegation and the artifact space. | Userland |
 | 19 | Protocol | External wire contracts (MCP, A2A, ACP-class, provider APIs); adapters at edges, never the internal architecture. | Protocol edge |
 | 20 | Capability discovery | Enumerating manifests: registry (static, indexed without execution) + runtime advertisement/removal events + probe invocations. | Stdlib (registry/probes) + kernel (events) |
-| 21 | Capability negotiation | Computing a Binding: intersecting requirements with a manifest, choosing dialects/tiers, sealing a typed feature set. | Kernel |
-| 22 | Policy/security layer | Grants (object-capability authority + budgets) + the ordered interposition pipeline + structural taint labels. | Kernel |
-| 23 | Durable execution | Journal + checkpoint + resume semantics; journal-first, fork-from-checkpoint as the repair verb. | Kernel |
+| 21 | Capability negotiation | Computing a Binding: intersecting requirements with a manifest, choosing dialects/tiers, sealing a typed feature set **and its guarantee grades**. Negotiation gates *eligibility* only; **selection** among eligible candidates is a separate routing strategy with its own contract (amendment A13, doc 06 §4.4). | Kernel (negotiation) / userland (selection strategy) |
+| 22 | Policy/security layer | Grants (object-capability authority as **kernel-minted handles** + reserved/settled budgets) + the ordered interposition pipeline + structural taint labels. | Kernel |
+| 23 | Durable execution | Journal + checkpoint + **resume (continue this lineage)** and **fork (branch a new one, with explicit dispositions)**; journal-first, fork-from-checkpoint as the repair verb. | Kernel |
 | 24 | Event system | The typed append-only journal (truth plane) + derived live streams (advisory plane, weaker guarantees). | Kernel (journal) / stdlib (projections) |
 | 25 | Observability | Projections of the journal (OTel export, traces, dashboards); never a second bolted-on bus. | Stdlib / userland |
 | 26 | Application/product UX | Surfaces above the SDK, attached via the same event protocol. | Out of scope / protocol edge |
