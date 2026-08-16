@@ -138,3 +138,12 @@ the index is never told a superseded mechanism is current.
 
 See `docs/22-RECORD-FORMAT-FREEZE-DECISION.md` for what these decisions do **not** yet
 settle: the record format is NOT frozen, and 44 findings from adversarial review #2 block it.
+
+## Consumer and repository boundaries (2026-08-16)
+
+| ADR | Decision |
+|---|---|
+| [022](ADR-022-runtime-consumer-boundary.md) | Kyxo Runtime is an independently usable runtime; Kyxo Platform and Kyxo Code are consumers integrating through contracts any third party can use |
+| [023](ADR-023-coding-engine-is-ide-independent.md) | The coding engine is IDE-independent; VS Code and JetBrains are clients, and the first client is the CLI |
+
+Elaborated in `docs/23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md`.

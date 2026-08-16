@@ -40,14 +40,16 @@ docs/
   13-FUTURE-SCENARIO-TEST.md      Architecture vs 15+ hypothetical future paradigms
   14-MVP-ARCHITECTURE.md          Smallest architecture that tests the hypothesis
   15-IMPLEMENTATION-ROADMAP.md    Implementation waves
-  16-ADR/                         Architecture Decision Records (001-021)
+  16-ADR/                         Architecture Decision Records (001-023)
   17-KERNEL-SEMANTICS.md          Normative semantics: journal, commit, fork, dedup, lineage
   18-KERNEL-INVARIANTS.md         25 invariants: rationale, enforcement, test, failure mode
   19-CRASH-RECOVERY-MODEL.md      Crash matrix and failure semantics
   20-SEMANTIC-TEST-RESULTS.md     What was tested, what was falsified, what remains at risk
   21-AMENDMENT-RECONCILIATION.md  A1-A14 ledger
   22-RECORD-FORMAT-FREEZE-DECISION.md  Freeze gate: NOT READY, with the blocker taxonomy
+  23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md  Repository layout, package boundaries, consumers
 prototypes/
+  README.md               Why nothing here is production code
   kernel/                 Phase-1 universality demo (eight constructs, one invocation path)
   harness/ graph/ loop/   Phase-1 strategy demos
   kernel-semantics/       Phase-2 executable kernel: src/, tests/, reference-model/, fuzz.ts
@@ -59,9 +61,9 @@ prototypes/
 `docs/01-EXECUTIVE-THESIS.md` and, for the re-argued version, `docs/16-ADR/ADR-021`.
 
 **Phase 2 (executable kernel semantics): complete.** The semantics are now executable and
-were attacked by five specialist reviewers with the code in hand. Record-format decision:
-**NOT READY TO FREEZE** — `docs/22-RECORD-FORMAT-FREEZE-DECISION.md`. Nine defects were
-found and fixed during the phase; 44 further findings block the freeze and constitute the
+were attacked by six specialist reviewers with the code in hand. Record-format decision:
+**NOT READY TO FREEZE** — `docs/22-RECORD-FORMAT-FREEZE-DECISION.md`. Ten defects were
+found and fixed during the phase; 52 further findings block the freeze and constitute the
 specification for the next phase. The kernel *semantics* largely survived; the *record
 format* did not.
 
@@ -83,14 +85,40 @@ SERIOUS). Its FATAL findings became binding amendments **A1–A14** in the Amend
 `research/DESIGN-SPINE.md`; all fourteen are now reconciled across the documents
 (`docs/21-AMENDMENT-RECONCILIATION.md`).
 
-**Review #2 (executable semantics, five specialist reviewers with the code and tests in
-hand)** voted NOT READY TO FREEZE unanimously, producing 17 FATAL / 34 SERIOUS / 9 MODERATE
-findings, 44 of them freeze-blocking, several with working reproductions and several
+**Review #2 (executable semantics, six specialist reviewers with the code and tests in
+hand)** voted NOT READY TO FREEZE unanimously, producing 22 FATAL / 40 SERIOUS / 10 MODERATE
+findings, 52 of them freeze-blocking, several with working reproductions and several
 discovered independently by multiple reviewers. Record: `research/ADVERSARIAL-REVIEW-2.md`.
 
 **Precedence:** the executable semantics (`prototypes/kernel-semantics/`, specified in docs
 17–19) govern where they disagree with earlier prose; the Amendment log governs where it
 disagrees with document bodies.
+
+## What Kyxo Runtime is, and what it is not
+
+Kyxo Runtime is a capability-oriented AI execution runtime: an execution substrate for
+heterogeneous models, tools, harnesses, agents, workflows and capability types that do not
+exist yet. It is **independently usable** — a third party with no connection to Kyxo can
+build on it using the same contracts Kyxo's own products use.
+
+It does **not** contain business logic, coding-domain logic, or any product concept. The
+kernel does not know what an organization, a requirement, a repository, an editor or a
+model vendor is.
+
+Reference consumers, integrated through generic contracts rather than built in:
+
+| Consumer | Role | Owns |
+|---|---|---|
+| **Kyxo Platform** (existing) | Consumer + capability provider | Organizations, projects, requirements, tests, defects, workflows, users, RBAC, business audit |
+| **Kyxo Code** (future) | Consumer + capability provider + harness supplier | Repository indexing, code context, patch construction, git/build/test integration, coding harnesses |
+| **Third parties** | Any of the four roles | Their own domain |
+
+IDEs (VS Code, JetBrains), CLIs and web UIs are **clients** of a consumer — never of the
+runtime, and never able to write runtime truth.
+
+Full model: `docs/23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md`.
+Decisions: `docs/16-ADR/ADR-022-runtime-consumer-boundary.md`,
+`docs/16-ADR/ADR-023-coding-engine-is-ide-independent.md`.
 
 ## Reading order
 
@@ -100,8 +128,10 @@ disagrees with document bodies.
 3. `docs/05-KERNEL-PRIMITIVES.md` + `docs/06-CAPABILITY-SPEC.md` — the core design
 4. `docs/07-RUNTIME-ARCHITECTURE.md` — how it fits together
 5. `research/ADVERSARIAL-REVIEW.md` — how hard it was attacked and what survived
-6. `docs/16-ADR/` — the consequential decisions, each with alternatives considered
-7. Everything else as reference depth
+6. `docs/23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md` — where each piece belongs, and who
+   consumes the runtime
+7. `docs/16-ADR/` — the consequential decisions, each with alternatives considered
+8. Everything else as reference depth
 
 ## Prototypes
 

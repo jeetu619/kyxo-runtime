@@ -1,5 +1,12 @@
 # 14 — MVP Architecture (Mission Phases 36–37)
 
+> **Repository and consumer boundaries:** where each piece belongs — packages, dependency
+> direction, consumers (Kyxo Platform, Kyxo Code, third parties), clients, data ownership
+> and deployment topologies — is defined in
+> `23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md` (decisions: ADR-022, ADR-023). Consumer
+> implementation is explicitly out of scope until the record format freezes (doc 22).
+
+
 > **Post-review status (2026-08-16, phase 2).** This document predates the adversarial review; the
 > review's binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14),
 > with the full findings in `research/ADVERSARIAL-REVIEW.md`. They are now reflected in the body.
