@@ -1,0 +1,404 @@
+# 08 — Event and State Model
+
+Status: DECIDED per `research/DESIGN-SPINE.md` §3 (kernel object 4: Event; object 8: Checkpoint), §5, §7, §8. Everything in this document is OUR PROPOSAL unless carrying an explicit evidence label per `research/METHODOLOGY.md`. Vocabulary follows spine §2 exactly: *kernel* (the minimal core), *runtime* (kernel + standard capabilities + SDKs), *harness* (a behaviour contract run in a cell — never the kernel), *event system* (typed append-only journal + derived advisory streams).
+
+This document specifies the event system and the state model: the journal-first durability decision, the event envelope, the full event taxonomy, the two-plane guarantee split, two-tier storage and compaction, cells/checkpoints/forking, delivery semantics, schema evolution, and — as the headline deliverable — the failure table mapping all seventeen mission failure scenarios onto kernel mechanisms. Sibling docs: object definitions in 05-KERNEL-PRIMITIVES.md, manifests and negotiation in 06-CAPABILITY-SPEC.md, process architecture in 07-RUNTIME-ARCHITECTURE.md, orchestration strategies in 04-ORCHESTRATION-MODELS.md, supervision policy detail in doc 13, verification in doc 16.
+
+---
+
+## 1. The journal-first decision (record-and-inject, not replay-determinism)
+
+All three mature durable-execution systems enforce one invariant — deterministic orchestration code, journaled nondeterministic effects — but they differ in *how recovery reconciles code with record*, and that difference is the decision this document rests on.
+
+**Evidence.**
+- FACT: Temporal recovers by re-executing workflow code and matching each emitted Command *positionally* against recorded history; a mismatch is a non-determinism error. Its versioning story is the direct cost: `patched()` marker semantics need ~100 doc lines of edge cases, worker-versioning pins executions to deployments, and the docs recommend periodic Continue-As-New "just to escape old code versions" (research/notes/durable-execution.md).
+- FACT: Temporal's own AI integrations document the friction inventory: the upstream `MemorySession` is "not replay safe"; the replacement dies at Continue-As-New; HITL serializes `RunState` whose validity requires "the same tool names, handoff graph, and MCP servers as the run that produced it"; persisted payload schemas become "durable contracts across deployments"; delegate-agent token usage inside activities is silently lost to the parent's accounting (research/notes/durable-execution.md).
+- FACT: Restate recovers by re-invoking the handler and *injecting* journaled results at each context action ("skip execution and inject the response it finds in the journal"); DBOS recovers by checkpoint lookup — before each step, return the checkpoint if present, resume at the first miss (research/notes/durable-execution.md).
+- FACT: Restate 1.6 and DBOS both expose *restart-from-journal-point / fork-from-step* as ordinary operational verbs; DBOS's fork replaced its former time-travel debugger (research/notes/durable-execution.md).
+- SOURCE-CODE OBSERVATION (HIGH): LangGraph's kernel durability is a state snapshot per barrier plus a `pending_writes` side channel, with fork (`source: "fork"`) as the branching verb — no positional replay anywhere (research/notes/langgraph.md).
+- SOURCE-CODE OBSERVATION (HIGH): ADK, Claude Code, and Codex all treat an append-only event/transcript log as the working source of truth, with resume implemented as log scan or transcript replay, and fork-as-copy (research/notes/google-adk.md, research/notes/anthropic-claude-code-agent-sdk.md).
+- INFERENCE (HIGH, from the Temporal AI-integration record): every friction point traces to one root cause — Temporal assumes *code is the durable artifact and data flows through it*, whereas an agent's durable artifact is the event data, and the code (prompts, model choice, tool wiring) is the volatile part (research/notes/durable-execution.md).
+
+**Interpretation.** Positional replay buys the strictest failure detection in exchange for making orchestration code a versioned durable contract. In agent workloads the deterministic core shrinks to a trivial fold (append event, check pending invocations, loop) while prompts, models, tool schemas and harness wiring change weekly. The contract Temporal sells is therefore levied on exactly the part of the system that churns fastest. Restate and DBOS demonstrate that the same durability invariant holds under a *record-and-inject* discipline in which the journal, not the code, is the identity of the run.
+
+**Implication.** The Kyxo journal is **journal-first**: the truth plane records typed outcomes of effects (Invocation transitions, Artifact commits, Grant charges); cell state is a projection over the journal; recovery is *load checkpoint → fold journal suffix → re-lease pending invocations* — never re-execute-and-match. There is no `patched()` equivalent, no requirement that old code paths survive in new binaries, and no positional identity between code and history. What we give up — Temporal's mismatch detection as a bug alarm — we replace with (a) definition hashes pinned in every checkpoint and every event (§6), so drift is detected as a *data* comparison at resume time rather than a replay crash mid-run, and (b) fork-from-checkpoint as the sanctioned response to drift (§6). Deterministic *re-derivation of projections* is still guaranteed — folding the same journal always yields the same state — which is the property audit, debugging and conformance testing actually need.
+
+**Confidence.** HIGH. Three independent systems demonstrate the invariant is separable from positional replay; the friction inventory against AI workloads is first-party documentation, not our reconstruction.
+
+---
+
+## 2. The event envelope
+
+The Event is kernel object 4 (spine §3): typed, versioned, append-only, two-tier. ADK is the documented counterexample that shapes the envelope: its `Event` *extends* the provider response type `LlmResponse`, and widening it in 2.0 (`node_info`, `output`) broke downstream stores and validators — the cost of an untyped envelope inheriting a model shape (SOURCE-CODE OBSERVATION + FACT, research/notes/google-adk.md). The Kyxo envelope inherits from nothing, carries payloads by reference, and reserves a namespaced metadata field in the MCP `_meta` style (FACT: `_meta` evolved into MCP's control plane — version, identity, tracing all ride there; research/notes/mcp-protocol.md).
+
+### 2.1 Envelope fields
+
+| Field | Type | Semantics |
+|---|---|---|
+| `id` | ULID | Globally unique, time-sortable. Assigned by the kernel at append. |
+| `seq` | integer | Cell-local journal position. Dense, monotonic per cell. The recovery cursor. |
+| `kind` | string | Reverse-namespaced event kind, e.g. `kyxo.invocation.completed`. The registry of kinds is closed for `kyxo.*`; userland kinds live under Kind-instance events (§3). |
+| `schemaVersion` | integer | Version of this kind's payload schema. `(kind, schemaVersion)` is the unit of evolution (§8). |
+| `protocolVersion` | string | Date-versioned kernel protocol revision the writer spoke (spine §8; MCP-style `YYYY-MM-DD`). |
+| `occurredAt` | RFC3339 | Wall-clock at emission. Ordering authority is `seq`, never `occurredAt`. |
+| `cellId` | id | The cell whose journal this event belongs to. Every event lives in exactly one cell journal. |
+| `invocationId` | id? | The invocation this event describes or was emitted within. |
+| `correlationId` | id | Constant across a causal tree (typically the root Objective's id). The audit query key. |
+| `causationId` | id? | The `id` of the event that directly caused this one. Gives the causal DAG. |
+| `actorId` | principal | Who caused it: a capability identity, a human principal, or `kernel`. **Stamped kernel-side, never writer-supplied** — Temporal's Principal Attribution sets the precedent that attribution must be unforgeable (FACT, research/notes/durable-execution.md). |
+| `grantId` | id? | The grant under whose authority the action ran. Absent only on kernel housekeeping events. |
+| `payload` | object? | Small, typed, inline data. Anything above the inline threshold (§5) must be an artifact ref. |
+| `payloadHash` | hash | Content hash of the canonical payload. Present even for inline payloads — this is what the chain covers (§2.3). |
+| `artifacts` | ref[] | Content-addressed references `{ref, role, labels}` into the CAS. Roles: `input`, `result`, `error`, `evidence`, `suspension`, `snapshot`, … |
+| `pins` | object | Version-by-data hashes in force when the event was produced: `{definition, config, prompt?, model?, manifest?}` (§6.5). |
+| `meta` | object | Namespaced extension bag (reverse-DNS keys; `kyxo.*` reserved). Carries W3C trace context for OTel export, MCP-style. |
+| `integrity` | object | `{prev, self}` hash-chain links (§2.3). |
+
+### 2.2 Examples
+
+A kernel event on the truth plane — an invocation committing:
+
+```json
+{
+  "id": "01J8FZK7Q0X3N9V4T2B6M8R1SD",
+  "seq": 4182,
+  "kind": "kyxo.invocation.completed",
+  "schemaVersion": 1,
+  "protocolVersion": "2026-08-01",
+  "occurredAt": "2026-08-15T09:12:33.412Z",
+  "cellId": "cell_review-run-7",
+  "invocationId": "inv_01J8FZJH...",
+  "correlationId": "obj_payments-refactor",
+  "causationId": "01J8FZJH2M...",
+  "actorId": "cap_anthropic-adapter@2.3.1",
+  "grantId": "grant_01J8FY...",
+  "payload": {
+    "outcome": "completed",
+    "idempotencyKey": "ik_cell_review-run-7:t14:model-call",
+    "leaseEpoch": 2,
+    "charge": { "tokensIn": 18422, "tokensOut": 902, "usd": 0.1417 }
+  },
+  "payloadHash": "sha256:7c1e...",
+  "artifacts": [
+    { "ref": "sha256:9ab2...", "role": "result", "labels": { "integrity": "model-output", "confidentiality": "project" } }
+  ],
+  "pins": { "definition": "sha256:d41d...", "config": "sha256:a1b2...", "model": "sha256:claude-fable-5#2026-06" },
+  "meta": { "kyxo.trace": { "traceparent": "00-4bf9..." } },
+  "integrity": { "prev": "sha256:e3b0...", "self": "sha256:11f4..." }
+}
+```
+
+A userland Kind-instance event — an Objective transitioning (see §3.3):
+
+```json
+{
+  "id": "01J8G02WQH...",
+  "seq": 4183,
+  "kind": "kyxo.kind.instance.updated",
+  "schemaVersion": 1,
+  "protocolVersion": "2026-08-01",
+  "occurredAt": "2026-08-15T09:12:34.001Z",
+  "cellId": "cell_objective-controller",
+  "correlationId": "obj_payments-refactor",
+  "causationId": "01J8FZK7Q0X3N9V4T2B6M8R1SD",
+  "actorId": "cap_objective-controller@1.0.0",
+  "grantId": "grant_01J8FX...",
+  "payload": {
+    "kindRef": "kyxo.dev/Objective@v1",
+    "instanceId": "obj_payments-refactor",
+    "transition": { "from": "executing", "to": "verifying" }
+  },
+  "payloadHash": "sha256:31aa...",
+  "artifacts": [{ "ref": "sha256:c0de...", "role": "result", "labels": {} }],
+  "pins": { "definition": "sha256:77aa..." },
+  "integrity": { "prev": "sha256:11f4...", "self": "sha256:beef..." }
+}
+```
+
+### 2.3 Immutability and the redaction strategy
+
+**Immutability rule.** A journal event is never updated and never deleted. Corrections, undo, and compaction are all *new events*: ADK's rewind — an inverse delta appended as an ordinary event — is the shipped precedent that even undo belongs in the log (SOURCE-CODE OBSERVATION, research/notes/google-adk.md), and Fowler's Retroactive Events pattern (correction as companion events, never rewrites) is the pattern-level ancestor (FACT-via-snippets, research/notes/durable-execution.md). Temporal's Reset likewise forks; it does not rewrite (FACT, research/notes/durable-execution.md).
+
+**The redaction problem.** Observability must not become a data-leak vector: journals will contain references to secrets accidentally pasted into prompts, personal data subject to erasure requests, and outputs of later-discovered-compromised capabilities (§9 row 12). Naive deletion breaks both immutability and any integrity chain; naive retention makes the journal an unerasable liability.
+
+**Design: tombstones + envelope-level integrity.** The hash chain is deliberately constructed so that *payload bytes are never chain input*:
+
+1. Each envelope's `integrity.self` is the hash of the canonical envelope with `payload` replaced by `payloadHash` and artifacts represented by their refs (which are already hashes). `integrity.prev` is the previous envelope's `self`. The chain therefore commits to *what the payload was* (its hash) without containing it.
+2. Redaction of a CAS payload deletes the bytes and installs a **tombstone entry** in the CAS index at the same hash: refs resolve to `{redacted: true, tombstone: "evt_..."}` rather than a miss — so a redacted artifact is distinguishable from a corrupted or lost one.
+3. Redaction of an inline payload replaces `payload` with a tombstone marker while `payloadHash` is retained untouched. Chain verification still passes end-to-end.
+4. Every redaction appends a truth-plane event `kyxo.artifact.redacted` recording the target ref/event, a reason class, the authorizing `grantId`, and the acting principal. Redaction is an exercise of authority and is itself audited; the policy pipeline gates it (redaction rights are a Grant right like any other, spine §3 object 7).
+5. Projections and observability exports derived from redacted ranges are invalidated and re-derived; because all views are projections of the journal (§6.1), post-redaction rebuilds are mechanical.
+
+The result: the journal remains verifiable end-to-end (every link checks), auditable (the *fact* and authority of every redaction is permanent), and erasable (the *content* is genuinely gone). What is lost is only the ability to re-read redacted content — which is the point.
+
+---
+
+## 3. Event taxonomy
+
+Two families. **Kernel events** (`kyxo.*`) are the closed vocabulary the kernel itself emits and validates — capability, binding, invocation, artifact, evidence, approval, checkpoint, grant/budget, policy, cell, and Kind machinery. **Kind-instance events** carry all userland semantics — Objective, Plan, Evidence-typed reports, Memory blocks — through the generic `kyxo.kind.instance.*` kinds plus the Kind's own registered schema (spine §3 object 9, the CRD move). The mission's proposed `ObjectiveCreated … ObjectiveCancelled` list lands entirely in the second family: the kernel never learns what an Objective is.
+
+### 3.1 Kernel events
+
+| Event kind | Emitter | Payload (summary) | Plane |
+|---|---|---|---|
+| `kyxo.capability.registered` | registry (via kernel) | capability identity, manifest hash, stability class | truth |
+| `kyxo.capability.advertised` / `.removed` | provider (via kernel) | runtime availability announcement/removal (Wayland pattern, spine §4) | truth |
+| `kyxo.capability.probed` | prober capability | probe verdict, evidence artifact ref, cache TTL | truth |
+| `kyxo.binding.sealed` | kernel negotiator | capability id, chosen dialect/tier set, grantId, policy route, manifest hash | truth |
+| `kyxo.binding.failed` | kernel negotiator | typed missing-axis / version-mismatch reasons (fail-loud, spine §4) | truth |
+| `kyxo.binding.revoked` | kernel | reason, revoking principal | truth |
+| `kyxo.invocation.submitted` | scheduler | bindingId, idempotency key, args refs, deadline, correlation/causation | truth |
+| `kyxo.invocation.suspended` | kernel | suspension class (`input-required` \| `auth-required` \| `approval-required` \| `budget-exceeded`), typed suspension payload ref | truth |
+| `kyxo.invocation.resumed` | kernel | resume payload ref, resuming principal | truth |
+| `kyxo.invocation.completed` | kernel (at commit) | outcome refs, charge summary, lease epoch, evidence refs if gated | truth |
+| `kyxo.invocation.failed` | kernel | error class, error artifact ref, attempts consumed | truth |
+| `kyxo.invocation.canceled` / `.rejected` | kernel | cancel origin / rejection reason (A2A `rejected` adopted — executors may decline; FACT, research/notes/a2a-protocol.md) | truth |
+| `kyxo.attempt.started` / `.progress` / `.failed` | executing provider | attempt number, lease id, partial output deltas, retry sentinel | **advisory** |
+| `kyxo.artifact.committed` | kernel | content hash, size, producing invocationId, input refs, taint/integrity/confidentiality labels | truth |
+| `kyxo.artifact.promoted` | kernel commit gate | target ref, evidence refs that satisfied the gate (doc 16) | truth |
+| `kyxo.artifact.redacted` | kernel | tombstoned ref/event, reason class, authorizing grant | truth |
+| `kyxo.evidence.recorded` | verifier capability (via kernel) | verdict, target ref, verifier binding, criteria ref | truth |
+| `kyxo.approval.requested` | kernel policy stage | typed request payload (what/why/risk class), approver principal, deadline, escalation policy | truth |
+| `kyxo.approval.granted` / `.denied` / `.expired` | human capability / scheduler | decision, responsibility metadata (who consented — non-negotiable, spine §5) | truth |
+| `kyxo.checkpoint.cut` | kernel | journal position, state-snapshot ref, pending-invocation set, definition hash | truth |
+| `kyxo.cell.created` / `.archived` | kernel | cell key, owning grant, behaviour (strategy) ref | truth |
+| `kyxo.cell.forked` | kernel | parent cell + checkpoint, new definition hash, fork reason | truth |
+| `kyxo.cell.activated` / `.passivated` | scheduler | activation lifecycle (Orleans-style, operational only) | advisory |
+| `kyxo.grant.issued` | kernel | parent grant (lineage), rights, budget vector (tokens, usd, wall-clock, invocations, spawn depth/width, risk class) | truth |
+| `kyxo.grant.charged` | kernel (at commit) | amounts per dimension, charged invocationId | truth |
+| `kyxo.grant.exhausted` | kernel | dimension hit zero; triggers `budget-exceeded` suspensions | truth |
+| `kyxo.grant.revoked` | kernel | reason, revoking principal, affected bindings | truth |
+| `kyxo.policy.denied` | policy pipeline | stage id, rule ref, denied target, typed reason | truth |
+| `kyxo.policy.evaluated` | policy pipeline | full allow-path evaluation trace | advisory |
+| `kyxo.journal.trimmed` | kernel | trim boundary (checkpoint id), archive location | truth |
+| `kyxo.kind.registered` | kernel | Kind name, schema, storage version, served versions | truth |
+| `kyxo.kind.instance.created` / `.updated` / `.deleted` | controllers/strategies (via kernel) | kindRef, instanceId, validated diff/transition, spec+status refs | truth |
+
+Two placement decisions deserve justification. *Attempt events are advisory* because Temporal's history is explicitly an outcome log, not an attempt log (`ActivityTaskScheduled` alone exists while retrying; FACT, research/notes/durable-execution.md) — recording attempts in truth would couple journal growth to retry weather and put uncommitted effects in the fold path (§4). *Allow-path policy traces are advisory but denials are truth* because denials change what happened (they are outcomes with audit weight), while allow traces are high-volume diagnostics; both remain reconstructible since policy stages are deterministic over journaled inputs.
+
+### 3.2 Watch streams
+
+Kind-instance events power **watch streams** (spine §3 object 9): a consumer subscribes to a Kind and receives its instance events as a projection — snapshot-first on attach, then ordered updates. This is the A2A recovery shape (Subscribe delivers a full Task snapshot before events, closing the get/subscribe race; FACT, research/notes/a2a-protocol.md) applied to every registered Kind.
+
+### 3.3 The mission's objective lifecycle, mapped
+
+The mission's `ObjectiveCreated … ObjectiveCancelled` events are *not* kernel kinds. Objective is a registered Kind; its controller (a userland strategy running in a cell) owns the state machine; the kernel contributes storage, schema validation, the watch stream, and the journal. The mapping:
+
+| Mission event | Kyxo realization |
+|---|---|
+| ObjectiveCreated | `kyxo.kind.instance.created` (kindRef `Objective`), spec validated against the registered schema |
+| ObjectivePlanned | `kyxo.kind.instance.updated` — status transition + Plan artifact attached by ref (Plan is itself a Kind; planners are capabilities, spine §2) |
+| ObjectiveStarted / Progressed | `.updated` transitions driven by the controller as invocations complete; progress detail rides refs, not inline blobs |
+| ObjectiveBlocked | `.updated` to a blocked status, causationId pointing at the suspending `kyxo.invocation.suspended` event |
+| ObjectiveVerified | `.updated` after `kyxo.evidence.recorded` + `kyxo.artifact.promoted` satisfy the objective's acceptance gate (doc 16) |
+| ObjectiveCompleted / ObjectiveFailed | `.updated` to terminal status; result artifacts promoted |
+| ObjectiveCancelled | `.updated` to `cancelled`, downstream propagation via the kernel's cancellation machinery (§7.3), not by the controller touching children directly |
+
+The payoff of this split is future-proofing: a team that wants `Experiment`, `Incident`, or `MigrationWave` lifecycles gets journal, watch, validation, and audit without any kernel change — precisely the CRD lesson (spine §3 object 9).
+
+---
+
+## 4. The two-plane model: durable truth vs live observation
+
+**Evidence.**
+- FACT: Temporal Workflow Streams — built from Signals/Updates/Queries — must surface *failed attempts' partial tokens* to subscribers, "because if the library waited for a successful Activity return before surfacing anything, there would be nothing to stream," while the workflow's durable state sees only the successful return; consumers must handle retry sentinels; and because every publish is a Signal, long streams consume history quota and force Continue-As-New (research/notes/durable-execution.md).
+- INFERENCE (HIGH, a2a note): A2A's delivery semantics are deliberately weak — streams and webhooks are lossy hints; the server-held Task record is the consistency anchor; reconnect = snapshot-first re-subscribe ("state is authoritative, events are advisory") (research/notes/a2a-protocol.md).
+- FACT: MCP added transport-level stream resumability (`Last-Event-ID`) in 2025-03-26 and deleted it in 2026-07-28, keeping durable task handles instead — durability moved from replayable byte streams to handles over state within ~16 months (research/notes/mcp-protocol.md).
+- FACT: DBOS ships durable streams as a *separate* per-write table, not as workflow history (research/notes/durable-execution.md).
+
+**Interpretation.** The truth plane and the live observation plane cannot be the same channel. Truth requires exactly-once landing of committed outcomes; observation requires immediate visibility of *uncommitted* work — tokens from an attempt that may yet fail and be retried. Any design that funnels observation through truth either pollutes the fold path with uncommitted effects or inherits truth's cost model for firehose data (Workflow Streams demonstrates both failure modes at once). Retried attempts' partial output is the sharpest case: under at-least-once execution (§7), attempt N's partial tokens can coexist with attempt N+1's committed outcome; if partials landed in truth, projections would fold effects that never happened.
+
+**Implication.** Kyxo's event system is two planes with explicitly different guarantees, and the advisory plane's weakness is a documented contract, not an implementation shortfall:
+
+| Property | Truth plane (journal) | Advisory plane (live streams) |
+|---|---|---|
+| Content | Committed outcomes, transitions, charges, evidence, approvals | Token deltas, attempt progress, heartbeats, allow-path policy traces, activation lifecycle |
+| Ordering | Total per cell (`seq`) | Best-effort per stream |
+| Delivery | Exactly-once landing (at-least-once ingress + dedup, §7.1) | At-least-once or lossy; truncatable; bounded buffers |
+| Retry visibility | Never — outcome log, not attempt log | Always — partial output of failed attempts flows, marked with retry sentinels |
+| Retention | Until snapshot+trim archival (§5.2) | Ephemeral; bounded ring buffers |
+| Recovery role | The recovery substrate | None. Never consulted for recovery |
+| Consumer reconciliation | Is the anchor | Snapshot-first attach against truth (watch-stream shape, §3.2) |
+
+```mermaid
+flowchart LR
+  subgraph exec["Invocation execution (at-least-once, leased)"]
+    A1["attempt 1 — lease expired"]
+    A2["attempt 2 — committed"]
+  end
+  subgraph advisory["Advisory plane — weaker guarantees"]
+    S["live streams: tokens, attempt progress, heartbeats"]
+  end
+  subgraph truth["Truth plane"]
+    J[("cell journal<br/>hash-chained envelopes")]
+    CAS[("CAS<br/>artifacts / payloads")]
+  end
+  A1 -- "partial tokens + retry sentinel" --> S
+  A2 -- "tokens" --> S
+  A2 -- "single committed outcome" --> J
+  J <--> CAS
+  J --> P["projections: cell state,<br/>materialized views, watch streams,<br/>OTel export"]
+  S -.->|"UI reconciles snapshot-first"| P
+```
+
+Observability (spine §2) is a projection of the truth plane — OTel export included — never a separate bolted-on bus; the advisory plane is the *only* additional channel, and it carries nothing that recovery or audit depends on.
+
+**Confidence.** HIGH. Two independent systems (Temporal, A2A) articulate the split explicitly; MCP's reversal is a third confirmation from the protocol side.
+
+---
+
+## 5. Two-tier storage: refs in the journal, payloads in CAS
+
+### 5.1 The claim-check as a primitive, not a retrofit
+
+Evidence is unanimous that single-tier event logs fail under AI payloads: Temporal's hard caps (51,200 events / 50 MB history, 2 MB payloads, base64 tax on binary, image outputs rejected outright by the Pydantic AI integration) forced External Storage claim-checks with "AI agent conversations" as the named motivation; DBOS documents "keep step outputs small, use S3 + pointer"; Workflow Streams' carried state is the entire in-memory log; Claude Code spills tool results over 25k tokens to files (all FACT: research/notes/durable-execution.md, research/notes/anthropic-claude-code-agent-sdk.md). Every one of these is a retrofit of the same missing primitive.
+
+Kyxo makes the split constitutive. The journal stores envelopes; payload bytes above a small inline threshold (V1: 4 KB canonical JSON — tunable, conformance-tested) live in the content-addressed store as Artifacts (kernel object 5), referenced by hash. Inline payloads below the threshold still carry `payloadHash`, so the integrity and redaction machinery (§2.3) is uniform. Because Artifacts are content-addressed and immutable with provenance and labels, cross-boundary passing is by reference at near-zero cost — the Mach/L4 lesson the spine encodes (spine §3 object 5). Storage V1 is SQLite/JSONL journal + file CAS behind a conformance-tested storage interface (spine §8; LangGraph's published checkpointer conformance suite is the precedent — SOURCE-CODE OBSERVATION, research/notes/langgraph.md).
+
+### 5.2 Snapshot + trim as first-class compaction
+
+Continue-As-New is a workaround for absent log compaction: it destroys sessions (`WorkflowSafeMemorySession` does not survive it), forces state to be re-threaded as arguments, and exists because history has hard caps (FACT, research/notes/durable-execution.md). Restate's shape is the correct one: processor snapshots to object store enable log trimming and fast catch-up as runtime-internal mechanics, no user ceremony (FACT, research/notes/durable-execution.md); Fowler's snapshots are the pattern ancestor.
+
+Kyxo compaction is therefore **snapshot + trim, first-class, no ceremony**:
+
+1. The kernel cuts a Checkpoint for the cell (§6.4) — an ordinary `kyxo.checkpoint.cut` event.
+2. The journal prefix strictly before the checkpoint's position becomes trimmable: moved to cold archive per retention policy (default: archive, not delete — the hash chain spans archive and hot tier; the chain head of the hot tier is anchored in the checkpoint).
+3. `kyxo.journal.trimmed` records the boundary and archive location.
+4. Dedup/idempotency state and pending-invocation state survive trims because they live in the checkpoint composite, not in trimmed prefix scans — the Workflow Streams TTL lesson generalized (§7.1).
+
+Vocabulary guard: this is *journal* compaction, a kernel mechanic. *Context* compaction — summarizing conversation history for a model's window — is an entirely different operation: an event with pluggable executors (client-side, harness, or provider-side, since Anthropic now ships server-side `compact_20260112`; FACT, research/notes/anthropic-claude-code-agent-sdk.md), owned by the context-management system (doc 09). The two never share machinery; conflating them is ADK's `compaction`-as-EventAction ambiguity, which we deliberately avoid.
+
+---
+
+## 6. State: projections, views, checkpoints, forks, version-by-data
+
+### 6.1 Cells as projections
+
+A Cell (kernel object 6) is a keyed, single-writer, stateful execution scope; its state is *defined* as a fold over its journal. This is the Restate architecture generalized: the Bifrost log is the WAL and partition-processor state is the materialized view (INFERENCE HIGH, research/notes/durable-execution.md); it is also LangGraph's checkpoint-as-channel-values under a different fold (SOURCE-CODE OBSERVATION, research/notes/langgraph.md) and ADK's state-folded-from-`state_delta`s (SOURCE-CODE OBSERVATION, research/notes/google-adk.md). Single-writer turns are scheduled by the kernel scheduler; shared-read access is served from the projection without taking the writer turn (Orleans single-threaded execution + reentrancy, Restate `shared` handlers — FACT, research/notes/durable-execution.md).
+
+### 6.2 Materialized views
+
+Beyond per-cell state, the kernel maintains registered **materialized views** updated transactionally with journal append: the invocation index (by status — DBOS's "agent inbox is just `list_workflows(status=PENDING)`" made structural; FACT, research/notes/durable-execution.md), the grant/budget ledger, the capability telemetry store (outcome counts per capability×model pair, feeding selection per spine C3), the dedup table, and Kind storage with its watch streams. Views are rebuildable from the journal by construction; view schema changes are deploy-time rebuilds, never journal migrations.
+
+### 6.3 Memory cells
+
+The memory system (doc 10) is not a kernel special case: memory blocks are labeled durable state cells whose writes are ordinary events with provenance (`actorId`, `grantId`, causation), quotas enforced as grant budget dimensions, and whose content participates in context compilation via the compile hook. What the event/state model contributes is exactly this: memory mutations are journaled, attributable, redactable (§2.3), and survive provider replacement because nothing in the envelope references a provider shape.
+
+### 6.4 The checkpoint composite
+
+A Checkpoint (kernel object 8) is a named consistent cut of one cell:
+
+```
+Checkpoint = {
+  journalPosition,        // seq of the last folded event
+  stateSnapshot,          // CAS ref: the folded cell state
+  pendingInvocations,     // in-flight invocation set: ids, idempotency keys,
+                          //   lease epochs, dedup-window state
+  definitionHash          // strategy hash + config/prompt/model pin lineage
+}
+```
+
+Each component earns its place from a documented failure or success elsewhere. *Snapshot alone is insufficient*: LangGraph needed `pending_writes` as a write-ahead side channel to avoid re-running successful parallel branches after a mid-step failure — their own correction toward "snapshot + pending effect log as one composite" (SOURCE-CODE OBSERVATION + the note's implication #3, research/notes/langgraph.md). *Definition identity is mandatory*: MAF scopes checkpoints to definitions (spine §3 object 8), and Temporal's `RunState` — valid only against an identical tool graph — is the failure mode when definition identity is implicit (FACT, research/notes/durable-execution.md). *Pending invocations + dedup state* make the checkpoint the recovery unit for §7 semantics without journal-prefix scans (ADK's resume-by-full-log-scan, with its own TODO admitting checkpoints should be first-class, is the counterexample — SOURCE-CODE OBSERVATION, research/notes/google-adk.md). Checkpoints are portable across processes: state-transfer migration is the distribution story (spine §8), commercially proven by Cursor's handoff (spine §3 object 8).
+
+### 6.5 Fork-from-checkpoint as the primary repair verb; version-by-data
+
+**Evidence.** DBOS `forkWorkflow(id, startStep)` is both the mass-recovery tool and the documented AI debugging tool ("rerun the misbehaving step under the exact conditions… then re-test with a fixed prompt"), and it *replaced* their time-travel debugger; Restate 1.6 ships restart-from-any-journal-point; Temporal's Reset forks with history copied to a chosen event; LangGraph forks checkpoints (`source: "fork"`) into diverging branches of a thread tree; Claude Code forks sessions by transcript copy (FACT / SOURCE-CODE OBSERVATION across research/notes/durable-execution.md, research/notes/langgraph.md, research/notes/anthropic-claude-code-agent-sdk.md).
+
+**Interpretation.** Four independent systems converged on fork-from-recorded-position as the verb that survives contact with AI workloads — because when the "code" (prompt, model, wiring) is data that changes weekly, *patching a live lineage* is the wrong primitive and *branching from a known cut* is the right one.
+
+**Implication — version-by-data.** Every event pins the definition/config/prompt/model hashes in force when it was produced (`pins`, §2.1); every checkpoint carries `definitionHash`. On resume, the kernel compares the resuming behaviour's definition hash against the checkpoint's. Match → continue. Mismatch → the kernel refuses silent continuation and offers exactly one verb: **fork** — a new cell lineage (`kyxo.cell.forked`) referencing the parent checkpoint, running the new definition forward. The old lineage stays immutable and auditable under the hashes that actually produced it. There is no patch-marker API, no worker-versioning, no requirement that old code paths exist in new binaries — the anti-Temporal-patching decision (spine §7). Upgrades, prompt fixes, and repairs are all the same operation, and the journal records precisely which definition produced which events.
+
+**Confidence.** HIGH on fork-as-verb (four-way convergence); MEDIUM on the refuse-then-fork resume policy specifics (our synthesis; the strictness knob — e.g., allowing continuation when only non-semantic config changed — needs prototype validation).
+
+```mermaid
+flowchart LR
+  subgraph c1["cell c1 (definition hash D1)"]
+    e1["e…4180"] --> cp["checkpoint.cut ck7<br/>pos=4180, snapshot, pending, D1"] --> e2["e4181…4207"]
+  end
+  cp -->|"fork with definition D2"| c2["cell c2 (D2)<br/>parent = c1@ck7"]
+  e2 -->|"c1 lineage remains immutable"| audit["audit / replay under D1 pins"]
+```
+
+---
+
+## 7. Delivery semantics
+
+### 7.1 The exactly-once illusion: at-least-once + idempotency keys + dedup windows
+
+FACT: every system studied converges on the same triangle — at-least-once redelivery, lease/visibility timeouts, idempotent consumers — with "exactly-once" always synthesized via dedup keys, never a transport guarantee: Restate ingress `Idempotency-Key` with 24 h retention; DBOS `deduplication_id`; Workflow Streams `(publisher_id, sequence)` dedup with a 15-minute TTL that must exceed the 10-minute publish-retry window; Celery `acks_late` + mandatory idempotency (research/notes/durable-execution.md). A2A and MCP stop short: A2A has no exactly-once anywhere and MCP's idempotency is an untrusted hint (FACT, research/notes/a2a-protocol.md, research/notes/mcp-protocol.md) — which is why this layer must be kernel-owned.
+
+Kyxo contract:
+
+- Every Invocation carries an **idempotency key** — caller-supplied, or kernel-derived deterministically from `(cellId, turn/step, spawn path)` in the uuid5 style LangGraph proved makes dynamic spawn memoizable and resumable (SOURCE-CODE OBSERVATION, research/notes/langgraph.md).
+- Delivery to capability providers is **at-least-once**. The journal's exactly-once landing is enforced at commit: a second commit bearing an already-landed idempotency key within the dedup window is dropped and counted (advisory).
+- **Dedup windows are documented, per-binding configuration** with a kernel-enforced coupling rule: `dedupTTL ≥ maxRetryHorizon` where the horizon = per-attempt timeout × max attempts + backoff sum + lease slack. Workflow Streams' 15-min-TTL-vs-10-min-retry coupling shows this is a real correctness knob, not tuning trivia (FACT, research/notes/durable-execution.md). A binding whose retry policy violates the rule **fails at bind time** — the fail-loud principle (spine §4) applied to reliability configuration.
+- Dedup state lives in the checkpoint composite and survives journal trims (§5.2, §6.4).
+
+### 7.2 Leases, visibility timeouts, fencing
+
+Every effectful invocation is dispatched under a **lease** with a visibility timeout and heartbeat renewal (the SQS/Celery pattern; FACT-by-convergence, research/notes/durable-execution.md). Lease expiry → redelivery to another provider under the same idempotency key. Each redelivery increments a **lease epoch**, and commits carry the epoch: a zombie worker completing after its lease expired presents a stale epoch and is rejected at commit — closing the duplicate-commit race that pure dedup windows leave open when a "dead" worker was merely slow. Poison-pill protection follows Celery's deliberate exception (a task that kills its worker is not redelivered forever; FACT, research/notes/durable-execution.md): attempts are capped, and cap exhaustion converts to `kyxo.invocation.failed` with the attempt trail attached as evidence, escalating per supervision policy (doc 13).
+
+### 7.3 Cancellation propagation
+
+Cancellation is a first-class kernel flow, not an exception convention (ADK's don't-catch-BaseException discipline is the documented failure of exceptions-as-control; SOURCE-CODE OBSERVATION, research/notes/google-adk.md):
+
+1. `cancel` targets an invocation or cell; the request is journaled.
+2. The kernel propagates down the invocation tree via grant lineage — every child invocation's grant descends from the parent's, so the blast set is computable, including spawn-depth descendants.
+3. Local invocations receive a typed cancellation signal at the next scheduler checkpoint; opaque remote executors (A2A, MCP tasks) get cooperative cancellation and are polled to a terminal state or lease expiry (A2A `CancelTask` is best-effort by spec; FACT, research/notes/a2a-protocol.md).
+4. Kernel guarantees on cancel commit: no further budget charges against the canceled subtree, leases are not renewed, pending suspensions are voided, and `kyxo.invocation.canceled` lands terminally only after children resolve or their leases lapse.
+
+### 7.4 Deadlines
+
+Every invocation and every suspension may carry a **deadline**; the scheduler enforces them with durable timers (Orleans's volatile-timers vs durable-reminders split names the requirement; FACT, research/notes/durable-execution.md). Deadlines are absent from A2A entirely and from Claude Code (no top-level session timeout, no per-subagent wall-clock cap — FACT, research/notes/a2a-protocol.md, research/notes/anthropic-claude-code-agent-sdk.md); they are part of the gap map this layer fills. Deadline expiry is a typed outcome (`failed` with deadline class, or escalation per policy for `approval-required` — §9 row 10), never a hang.
+
+---
+
+## 8. Schema evolution
+
+The journal outlives every code version; evolution is therefore a specified mechanism, not a migration afterthought. Fowler names schema evolution the enduring unsolved cost of event sourcing, addressed in practice by upcasters and versioned event types (FACT-via-snippets, research/notes/durable-execution.md). Kyxo adopts that discipline with two regimes, matching the two mutability classes in the system:
+
+**Immutable journal events: write-once, upcast-at-read.** An envelope is stored forever at the `(kind, schemaVersion)` it was written with — immutability (§2.3) forbids rewrite-in-place migrations. Readers obtain the current version through a registered **upcaster chain**: pure, total functions `vN → vN+1`, composed. Upcasters may only add/derive/rename fields; anything lossy mints a new kind. Unknown fields are preserved round-trip (must-ignore + must-preserve), so consumers older than writers degrade safely — the MCP/TLS lesson the spine bakes into bindings, applied to storage.
+
+**Mutable Kind instances: one storage version + conversion (the CRD pattern).** Kind storage serves multiple schema versions while persisting exactly one storage version, converting at the boundary — the Kubernetes CRD mechanism the spine adopts as kernel object 9. A Kind bumps its storage version by registering converters; the kernel migrates instances lazily on write. This keeps userland schema churn (Objectives, Plans, Memory blocks — the fastest-moving schemas in the system) out of the journal-evolution machinery entirely: the journal records *that* an instance changed and the diff ref; the Kind store owns *shape*.
+
+**Governance of the kernel vocabulary.** The kernel protocol is date-versioned with stability classes and a 12-month deprecation floor (spine §4) — directly lifted from MCP's machinery, which demonstrably survived a full architectural rewrite of its own protocol using its own versioning model (FACT, research/notes/mcp-protocol.md). Event kinds carry stability classes (`experimental/testing/stable/deprecated`); deprecated kinds keep their upcasters for the full window.
+
+**Event-schema conformance tests.** Two precedents make this non-optional: MCP requires a conformance scenario mapping every normative MUST/SHOULD to a check ID *before* a SEP reaches Final (FACT, research/notes/mcp-protocol.md), and LangGraph ships `Checkpoint.v`, checkpoint migrations, and a published checkpointer conformance suite (SOURCE-CODE OBSERVATION, research/notes/langgraph.md). Kyxo's suite, shipped with the protocol schema (spine §8): a golden corpus of envelopes per kind per version; round-trip tests (serialize/deserialize/preserve-unknown); upcaster chain tests (every historical version reaches current, idempotently); hash-chain and redaction-tombstone verification over corpus journals; and storage-adapter conformance (append, fold determinism, trim, checkpoint restore) that any third-party journal/CAS backend must pass. ADK's five language SDKs re-deriving an unversioned de facto event schema — with 2.0's additive fields breaking downstream validators — is the documented failure this prevents (FACT, research/notes/google-adk.md).
+
+---
+
+## 9. The failure table
+
+All seventeen mission failure scenarios, mapped onto the mechanisms above. Conventions: "supervision" = OTP-style restart classes with restart-intensity budgets extended to token/cost, escalating to parent cells or humans (spine §7; detail in doc 13 — the OTP model is the documented missing complement in all durable runtimes, which retry flat with no hierarchy above the loop: FACT/INFERENCE HIGH, research/notes/durable-execution.md). "Worker" here means a capability provider process executing an invocation; "runtime crash" means the Kyxo runtime process itself. Every recovery path below terminates in a journaled, typed outcome — nothing hangs, nothing fails silently.
+
+| # | Scenario | Detected by | Kernel behavior | Recovery path | Absorbing primitive(s) |
+|---|---|---|---|---|---|
+| 1 | **Model timeout** | Per-attempt timeout / lease expiry on the model-adapter invocation; no commit arrives | Attempt marked failed (advisory); redeliver under same idempotency key per binding retry policy with backoff; attempts capped | Retry to commit; on cap exhaustion → `invocation.failed` with attempt trail, supervision escalates (swap binding, degrade tier, or surface) | Invocation lifecycle + scheduler leases + retry policy |
+| 2 | **Provider outage** | Failure-rate spike in capability outcome telemetry; typed provider errors across bindings | Mark capability unhealthy via advertisement events; new bindings to it fail eligibility; in-flight invocations suspend (interrupted class) rather than burn retry budget | Re-negotiate Bindings to an eligible alternate (manifest gates eligibility, telemetry drives selection — spine C3); or park with deadline until health recovers | Binding re-negotiation + capability telemetry + suspension states |
+| 3 | **Tool failure** (clean error result) | Invocation commits with `failed` outcome and typed error artifact | Journal the failure; charge actual usage; no kernel-initiated retry unless manifest declares idempotence and policy allows | Error becomes context for the strategy/model to self-correct (Claude Code's model-visible violation pattern — FACT, research/notes/anthropic-claude-code-agent-sdk.md); harness decides retry/replan under its mistake budget | Invocation terminal state + Event-as-context; strategy concern above the kernel |
+| 4 | **Partial tool side effects** (crash mid-effect) | Lease expiry without terminal event, on a capability whose manifest declares non-idempotent effects | For idempotent capabilities: redeliver, provider dedups by key. For declared non-idempotent: **no auto-retry**; invocation → `failed(effect-uncertain)` with lease/attempt evidence | Reconciliation invocation (probe actual external state) gated by verification; compensation or resume decided by supervision/human; approval-required if risk class demands | Idempotency keys + leases + manifest idempotency declaration + verification gate |
+| 5 | **Worker crash** (provider process dies) | Heartbeat loss → lease/visibility timeout | Lease epoch incremented; invocation redelivered to another provider instance; stale-epoch commits from a zombie rejected (§7.2); partial advisory output carries retry sentinel | Next attempt commits exactly once via dedup; poison-pill cap prevents crash loops, converting to failed + escalation | Leases/epochs + at-least-once redelivery + idempotency keys |
+| 6 | **Runtime crash** (Kyxo process dies) | Restart recovery scan finds cells with journal beyond last fold / pending invocations | Rebuild from truth: load each active cell's latest checkpoint, fold journal suffix, restore pending-invocation + dedup state from the composite, re-issue leases; advisory streams lost by contract (§4) | Outstanding external effects reconcile via idempotency keys on redelivery; durable timers re-armed; uncommitted work re-executes | Journal + Checkpoint composite + CAS; two-plane split makes the loss surface exactly the advisory plane |
+| 7 | **Context overflow** | Context compiler's deterministic token accounting pre-flight; or provider length error decoded by the adapter | Not a durability failure: kernel emits a compaction-required event; compaction executed by a pluggable executor (client/harness/provider-side — doc 09; spine §5) | Invocation retried with recompiled view; journal untouched (truth ≠ context window); repeated thrash bounded by mistake budget (Claude Code's thrash detector is the precedent — FACT, research/notes/anthropic-claude-code-agent-sdk.md) | Context-management system + compaction-as-event; journal unaffected |
+| 8 | **Budget exhausted** | Kernel decrement at commit / reservation check at submit hits a zero budget dimension | `grant.exhausted` journaled; affected invocations → `budget-exceeded` (interrupted class, spine §3 object 3); spawning refused; running children of the grant subtree stopped (Claude Code's tree-wide enforcement contract — FACT, research/notes/anthropic-claude-code-agent-sdk.md) | Escalation up the grant lineage (A2A AUTH_REQUIRED chaining generalized — FACT/INFERENCE HIGH, research/notes/a2a-protocol.md): parent or human issues an attenuated top-up grant and resumes, or cancels | Grant (budgets as attenuated quantitative rights) + interrupted state + escalation chain |
+| 9 | **Permission denied** | Policy pipeline deny stage at bind time or at effectful invocation | Bind-time: `binding.failed`, loud, typed. Run-time: `policy.denied` + invocation `rejected`; deny stages non-bypassable (spine §3, mechanisms) | Typed denial returns as context (model self-corrects or re-plans); if policy routes to escalation instead: `approval-required` suspension to a human capability | Policy pipeline + Binding fail-loud + Invocation rejected/approval-required |
+| 10 | **Human approval delayed** | Durable deadline timer on the `approval-required` suspension | Suspension is durable and free: typed suspension payload journaled, cell passivated while waiting (Restate awakeable/suspend economics — FACT, research/notes/durable-execution.md) | On deadline: escalation policy — remind, route to alternate approver, auto-deny, or fail; every branch journaled with responsibility metadata (who was asked, who decided) | Typed suspension + scheduler deadlines + humans-as-capabilities contract (spine §5) |
+| 11 | **Remote agent disappears** (A2A peer / remote cell) | Federation-edge lease: poll/subscribe failures against the remote task handle beyond retry horizon | Remote executor is opaque — recovery is by handle, not by reaching inside: re-attach snapshot-first (A2A Subscribe semantics), keep the invocation parked (interrupted) meanwhile | Handle recovered → resync mirrored state and continue. Horizon exceeded → `failed(remote-lost)` with evidence; re-negotiate binding to an alternate capability or escalate; telemetry demotes the remote for selection | Invocation lifecycle + leases at the federation edge + Binding + remote-cell mirroring (spine §5) |
+| 12 | **MCP server compromised** | Policy interposition anomalies; verification failures on its outputs; taint-label propagation flags derived artifacts; telemetry deviation | Revoke every Grant bound to the capability (revocation immediate; interposition invisible to holder — spine §3 object 7); bindings die with grants; quarantine artifacts by structural taint labels | Blast radius computed *from the journal*: provenance identifies every artifact/context derived from the compromised source; affected cells fork from pre-compromise checkpoints; leaked payloads redacted via tombstones (§2.3); post-mortem replays from archive under pinned hashes | Grant revocation + Artifact taint/provenance + policy pipeline + fork-from-checkpoint + redaction |
+| 13 | **Duplicate event delivery** | Idempotency-key lookup at commit within the dedup window; stale lease epoch at commit | Duplicate dropped, counted on the advisory plane; exactly-once landing preserved; window-vs-retry coupling validated at bind so late duplicates can't outlive their window (§7.1) | None needed — absorption *is* the recovery; dedup state survives trims via checkpoint composite | Idempotency keys + dedup windows + lease epochs + exactly-once journal landing |
+| 14 | **Checkpoint corruption** | Content-address mismatch on snapshot read; envelope-chain verification failure; definition-hash validation at resume | Checkpoints are an optimization over the journal, never sole truth: discard the corrupt checkpoint | Fall back to previous checkpoint + longer journal-suffix fold; if the journal itself is damaged, the hash chain localizes the earliest bad link — fork from the last verifiable prefix; archive tier serves trimmed history | CAS integrity + journal-as-truth (checkpoint = rebuildable cache) + hash chain + fork |
+| 15 | **Malformed model output** | Model adapter decode stage: unparseable tool call, schema-violating structured output | Raw wire output still committed as an artifact (audit + telemetry); typed decode-failure event; charge actual usage | Harness retry with error-as-context (re-prompt), bounded by mistake budget / restart intensity; per-capability×model outcome telemetry records the miss and feeds selection and dialect tuning (spine H2 amendment, C3) | Model adapter contract + Invocation retry + outcome telemetry + Grant-bounded retries |
+| 16 | **Impossible plan** (references unbindable capabilities / contradictory constraints) | Bind time, before execution: negotiation fails on missing axes or empty eligibility set; plan-to-cell-steps compilation fails | `binding.failed` events with typed reasons; the kernel never silently degrades (spine §4); nothing executes, nothing is charged beyond planning cost | Plan is a versioned Kind instance: planner capability (userland) revises → new plan version; unresolvable → objective `blocked` + escalation to the objective's principal | Binding fail-loud + Kind (plan versions) + escalation |
+| 17 | **Verification repeatedly fails** | Commit gate: successive `evidence.recorded` events with failing verdicts against the same invocation/promotion; counter per scope | Outcome stays uncommitted/unpromoted — the truth plane never accepts an outcome whose required evidence is missing (doc 16); each retry charges its grant | Restart-intensity budget (N failures per window, OTP-style, extended to token/cost — spine §7) exhausts → supervision escalates to parent cell or human with the full evidence trail; parent may re-plan, re-bind, relax criteria (authority permitting), or cancel | Verification commit gate + Evidence artifacts + supervision restart budgets + Grant |
+
+Reading the table columns vertically confirms the spine's economy claim: seventeen scenarios are absorbed by the nine kernel objects plus the two kernel mechanisms, with zero scenario-specific machinery. The invocation lifecycle's interrupted class absorbs rows 8–11; leases + idempotency absorb rows 1, 4, 5, 13; journal + checkpoint absorb rows 6 and 14; grants absorb rows 8, 12, 15, 17; and the strategies above the kernel (harness retry, re-planning) handle exactly the rows where *judgment*, not mechanism, is required (3, 7, 15, 16, 17) — which is where it belongs.
+
+---
+
+## 10. Open commitments this document makes on siblings
+
+- Doc 04 (Orchestration Models): strategies observe only truth-plane events and typed suspensions; any strategy that needs attempt-level visibility must subscribe to the advisory plane and may not fold it into durable state.
+- Doc 06 (Capability Spec): manifests must declare effect idempotence (row 4 depends on it), retry-policy bounds (dedup coupling, §7.1), and suspension payload schemas.
+- Doc 07 (Runtime Architecture): the storage interface must pass the §8 conformance suite; recovery scan order and lease-timer restoration are runtime-architecture obligations.
+- Doc 13: restart-intensity vocabulary (classes, windows, token/cost extensions) referenced in rows 1, 15, 17.
+- Doc 16: the evidence-before-commit gate referenced in §3.1, §9 rows 4, 12, 17.
