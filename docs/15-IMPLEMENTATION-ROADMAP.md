@@ -624,7 +624,7 @@ review retracted.
 
 > **Superseded by Wave S1 (2026-08-16).** The step below assumed the record format was
 > close to stable. It was not: doc 22 found 52 freeze-blocking findings, and Wave S1
-> replaced the format (revision `2026-08-17`) to resolve nine of the eleven clusters.
+> replaced the format (revision `2026-08-17`) to resolve eight of the eleven clusters.
 >
 > **The actual next step is an independent adversarial review of the new format** — doc 25
 > §10. Generating a JSON Schema and ten conformance fixtures from a format that has not

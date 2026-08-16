@@ -8,7 +8,7 @@
 > in a separate workstream; until that lands, a body may still describe a superseded mechanism,
 > and in that case the amendment log and the phase-2 ADRs (017–021) govern.
 
-This directory holds the twenty-seven ADRs of the Kyxo research program. Every ADR is written from
+This directory holds the twenty-eight ADRs of the Kyxo research program. Every ADR is written from
 `research/DESIGN-SPINE.md` (the binding design contract) under the claim-labeling discipline of
 `research/METHODOLOGY.md`. ADRs 001–016 share one format: Title / Status / Context (forces, with
 labeled evidence citations into `research/notes/`) / Decision (imperative) / Alternatives

@@ -155,11 +155,11 @@ async function runSequence(seed: number, steps: Step[]): Promise<void> {
       `${denialReason === undefined ? '' : ` (${denialReason})`}, model said ${predicted.kind}`,
     );
 
-    // Advance the model along the same path the capability took. A landing is only
-    // effective for an external class — a capability declaring otherwise is refused.
-    const canLand = cap.cls.startsWith('external');
+    // Advance the model along the same path the capability took. Every reported landing
+    // is recorded, whatever the declared class: a misdeclared one is recorded at the
+    // strictest class rather than discarded (docs/20 F-22).
     if (predicted.kind === 'admitted') {
-      if (step.land && canLand) model.land(modelInvId);
+      if (step.land) model.land(modelInvId);
       model.settle(modelInvId, step.fail ? 'failed' : 'completed', step.declare, UNIT_POLICY);
     }
 

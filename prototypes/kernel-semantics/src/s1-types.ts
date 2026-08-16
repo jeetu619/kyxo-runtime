@@ -206,6 +206,15 @@ export interface ExecutionProjection {
      * process is one that leaks on every crash.
      */
     reservation: Units;
+    /**
+     * Units whose consumption is authoritatively reported by the provider, as negotiated
+     * AT ADMISSION. Journaled for the same reason `effectClass` is: it decides an
+     * authoritative ledger movement, so reading it from the in-process capability registry
+     * at settlement would let a manifest edited between admission and settlement — or
+     * simply re-supplied differently after a restart — change what a committed invocation
+     * costs. See docs/20 F-20.
+     */
+    meteredUnits: readonly string[];
     suspension?: { reason: string; payload: unknown } | undefined;
   }>;
   cell: Map<string, unknown>;

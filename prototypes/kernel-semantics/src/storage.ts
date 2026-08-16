@@ -21,13 +21,48 @@ export function sha(input: unknown): string {
   return createHash('sha256').update(canonical(input)).digest('hex').slice(0, 32);
 }
 
-/** Deterministic canonical serialization: sorted keys, no floating ambiguity. */
+/** Raised when a value cannot be canonicalised without losing information. */
+export class NonCanonicalValueError extends Error {}
+
+/**
+ * Deterministic canonical serialization: sorted keys, no floating ambiguity.
+ *
+ * REFUSES what it cannot represent. It used to walk `Object.keys` and recurse, so any
+ * value whose content lives outside its own enumerable string keys — `Date`, `Map`, `Set`,
+ * a class instance, anything getter-based — canonicalised to `{}`. Two requests differing
+ * only in a `Date` therefore produced the SAME effect key: one charge succeeded and a
+ * genuinely different charge was refused as a duplicate, or worse, a safe-class caller got
+ * someone else's answer back marked `deduplicated` (docs/20 F-25).
+ *
+ * A `Date` in a request is not adversarial, it is Tuesday. Silently hashing it to nothing
+ * is the kind of failure that only shows up as a money incident, so this throws instead.
+ */
 export function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (value === null || typeof value !== 'object') {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new NonCanonicalValueError(`non-finite number in canonical value: ${String(value)}`);
+    }
+    if (typeof value === 'bigint' || typeof value === 'function' || typeof value === 'symbol') {
+      throw new NonCanonicalValueError(`cannot canonicalise a ${typeof value}`);
+    }
+    return JSON.stringify(value) ?? 'null';
+  }
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+
+  const proto = Object.getPrototypeOf(value) as object | null;
+  if (proto !== Object.prototype && proto !== null) {
+    throw new NonCanonicalValueError(
+      `cannot canonicalise ${(value as object).constructor?.name ?? 'a non-plain object'}: ` +
+      'its content is not in its enumerable keys, so it would hash as {}. ' +
+      'Convert it to a plain value first (e.g. a Date to an ISO string).',
+    );
+  }
+  // Read each key ONCE. Reading twice let a getter return different values to the filter
+  // and to the map, so a record could be written that its own verifier rejected (F-26).
   const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(obj[k])}`).join(',')}}`;
+  const entries = Object.keys(obj).sort().map((k) => [k, obj[k]] as const)
+    .filter(([, v]) => v !== undefined);
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
 }
 
 /** Phase-2 record format: the checksum covers the events array. */

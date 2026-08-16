@@ -269,15 +269,23 @@ test('B3/E8: resume is refused for anything that is not suspended', async () => 
   );
 });
 
-test('B3/E12: a capability cannot claim it touched the world unless its class says it can', async () => {
-  // docs/20 F-19, found by differential testing. A capability declaring class `local`
-  // yielded {type: 'external', landed: true}. The kernel recorded a landing, but
-  // protection keys off the declared CLASS — and `local` is not exclusive — so the
-  // landing bound nothing and the same external effect could be repeated freely.
+test('B3/E12: a misdeclared landing is recorded at the strictest class, never discarded', async () => {
+  // Two findings, in sequence, and the second corrects the first.
   //
-  // The class is a negotiated manifest property fixed before the invocation; the proposal
-  // is per-yield and untrusted. Where they disagree the manifest wins, and the
-  // disagreement is journaled rather than silently dropped.
+  // F-19 (differential testing): a capability declaring class `local` yielded
+  // {type: 'external', landed: true}. The kernel recorded a landing, but protection keys
+  // off the declared CLASS — and `local` is not exclusive — so the landing bound nothing
+  // and the effect could be repeated freely.
+  //
+  // F-22 (adversarial review): the fix for F-19 REFUSED the landing and recorded only a
+  // policy denial. That was worse than the bug. The original bug recorded a true fact and
+  // failed to act on it; the fix destroyed the fact, so `hasLanded` was false, protection
+  // never engaged, and the next attempt hit the world again — a double charge produced by
+  // a safety fix.
+  //
+  // A report that the world changed is never discarded. The landing is recorded at the
+  // strictest class so protection engages, and the misdeclaration is journaled beside it.
+  // Punishing a bad manifest by forgetting what it told us is not a safety measure.
   const world = new World();
   const storage = new Storage();
   const k = new S1Kernel(storage);
@@ -304,11 +312,27 @@ test('B3/E12: a capability cannot claim it touched the world unless its class sa
   assert.equal(out.state, 'completed');
 
   const fam = k.familyFor(exec);
-  assert.equal(fam.landed.length, 0, 'no landing may be recorded for a non-external class');
+  assert.equal(fam.landed.length, 1, 'the world-fact is kept');
+  assert.equal(
+    fam.landed[0]!.effectClass, 'external-irreversible',
+    'recorded at the strictest class, so protection engages despite the bad manifest',
+  );
+
+  const key = sha({ cap: 'liar', step: 'op', request: { n: 1 } }) as EffectKey;
+  assert.equal(k.isProtected(exec, key), true);
+  await assert.rejects(
+    () => k.invoke(exec, 'liar', { n: 1 }, grant, { step: 'op' }),
+    (e: unknown) => e instanceof ClaimDeniedError,
+    'and the repeat that the first fix permitted is refused',
+  );
+  assert.equal(world.count('charge'), 1, 'the world is touched once');
+
   const denials = k.events(familyId).filter(
     (e) => e.kind === 'policy.denied' && e.payload['reason'] === 'external-landing-from-non-external-class',
   );
-  assert.equal(denials.length, 1, 'the misdeclaration is journaled, not silently dropped');
+  assert.equal(denials.length, 1, 'the misdeclaration is journaled beside the landing');
+  assert.equal(denials[0]!.payload['declaredClass'], 'local');
+  assert.equal(denials[0]!.payload['recordedAs'], 'external-irreversible');
   assertLiveEqualsReplayed(k, familyId);
 });
 

@@ -34,6 +34,14 @@ export class BudgetError extends S1Error {}
 export class ForkError extends S1Error {}
 /** Raised when the journal is corrupt in a way recovery must not paper over (B6). */
 export class JournalIntegrityError extends S1Error {}
+/**
+ * Raised when a durable write failed in a way that leaves its outcome UNKNOWN.
+ *
+ * Distinct from every other error the kernel raises, because it is the only one that means
+ * "I do not know what the world or the journal now contains." It must never be downgraded
+ * into a settled failure — that is exactly the bug it exists to prevent (docs/20 F-27).
+ */
+export class CommitFailedError extends S1Error {}
 
 interface Draft {
   readonly kind: S1EventKind;
@@ -66,11 +74,34 @@ export function verifyS1Record(record: unknown): boolean {
   });
 }
 
+/** The units this capability declares as provider-metered, in a stable order. */
+function meteredOf(policy: Readonly<Record<string, UnitPolicy>> | undefined): string[] {
+  return Object.entries(policy ?? {}).filter(([, p]) => p.metered).map(([u]) => u).sort();
+}
+
 /** Per-unit reservation: max(capability floor, caller estimate), plus one invocation. */
 function reserveUnits(
   policy: Readonly<Record<string, UnitPolicy>> | undefined,
   estimate: Units | undefined,
 ): Units {
+  // Every unit amount must be a finite, non-negative number BEFORE it reaches the ledger.
+  //
+  // `NaN` is a number, so `estimate: { usd: NaN }` was not even a type error. It then beat
+  // every check by the same trick each time: `NaN > available` is false, so admission
+  // allowed it; it propagated into the ledger; `remaining()` returned NaN forever after;
+  // and S1-I5 could not see it, because every comparison against NaN is false. One
+  // type-correct field permanently disabled budget enforcement family-wide, and the budget
+  // silently reset to full on the next restart because NaN serialises to null
+  // (docs/20 F-28, found by adversarial review).
+  const declared = [
+    ...Object.entries(policy ?? {}).map(([u, pol]) => [u, pol.perInvocation] as const),
+    ...Object.entries(estimate ?? {}),
+  ];
+  for (const [unit, amount] of declared) {
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+      throw new BudgetError(`unit ${unit} must be a finite non-negative number, got ${String(amount)}`);
+    }
+  }
   const out: Record<string, number> = { invocations: 1 };
   for (const [unit, p] of Object.entries(policy ?? {})) {
     out[unit] = Math.max(out[unit] ?? 0, p.perInvocation);
@@ -320,8 +351,13 @@ export class S1Kernel {
     // (tests/s1-concurrency) and the re-entrancy flag below.
     const decision = this.enterAdmission((): AdmissionDecision => {
       // Lineage-tree protection (B9a): has this effect already landed in this family?
+      // NOTE the absence of `&& exclusive`. Protection is a property of what LANDED, not
+      // of what the newcomer declares itself to be — `protectionFor` has already filtered
+      // to landings whose class cannot be repeated. Gating on the caller's class let a
+      // capability dodge protection by declaring `local`, which is exactly the manifest
+      // a misdeclaring capability has (docs/20 F-22).
       const prot = protectionFor(fam, effectKey);
-      if (prot.protected && exclusive) {
+      if (prot.protected) {
         this.commit(familyId, execId, [{
           kind: 'effect.claim.denied', invocationId, grantId: grant.id,
           payload: { effectKey, reason: 'protected-effect-in-lineage', landedBy: prot.by ?? null },
@@ -391,7 +427,11 @@ export class S1Kernel {
       const claimId = this.id('claim') as ClaimId;
       this.commit(familyId, execId, [
         { kind: 'invocation.admitted', invocationId, grantId: grant.id,
-          payload: { capabilityId, request, effectKey, effectClass, requiresEvidence: opts.requiresEvidence === true } },
+          payload: {
+            capabilityId, request, effectKey, effectClass,
+            requiresEvidence: opts.requiresEvidence === true,
+            meteredUnits: meteredOf(provider.manifest.units),
+          } },
         { kind: 'effect.claimed', invocationId, grantId: grant.id,
           payload: { claimId, effectKey, effectClass, exclusive } },
         { kind: 'grant.reserved', invocationId, grantId: grant.id, payload: { units: res } },
@@ -432,6 +472,30 @@ export class S1Kernel {
     const provider = this.caps.get(inv.capabilityId);
     if (provider === undefined) throw new S1Error(`unknown capability ${inv.capabilityId}`);
 
+    // Resume dispatches to the world, so it passes the same gates admission does. It used
+    // to check only "is it suspended", so a grant revoked or expired while the invocation
+    // waited did not bind the resume, and a deny-class policy stage — the documented
+    // kill switch — was bypassed entirely while the invocation reported `completed`
+    // (docs/20 F-29, found by adversarial review). A gate that closes once the horse has
+    // left is not a gate, which is the sentence ADR-024 opens with.
+    const blocked = chainBlocked(fam, inv.grantId, this.clock);
+    if (blocked !== null) {
+      this.commit(familyId, execId, [{ kind: 'grant.denied', invocationId, grantId: inv.grantId,
+        payload: { reason: blocked, at: 'resume' } }]);
+      throw new AuthorizationError(`grant ${inv.grantId}: ${blocked}`);
+    }
+    for (const stage of this.policies) {
+      const d = stage.evaluate({
+        capabilityId: inv.capabilityId, effectClass: inv.effectClass,
+        grant: fam.grants.get(inv.grantId) as never, phase: 'admission',
+      });
+      if (d.decision === 'deny') {
+        this.commit(familyId, execId, [{ kind: 'policy.denied', invocationId, grantId: inv.grantId,
+          payload: { stage: stage.name, reason: d.reason, at: 'resume' } }]);
+        throw new AuthorizationError(`policy denied: ${d.reason}`);
+      }
+    }
+
     this.commit(familyId, execId, [{
       kind: 'invocation.resumed', invocationId, grantId: inv.grantId,
       payload: { effectKey: inv.effectKey, payload },
@@ -468,26 +532,31 @@ export class S1Kernel {
       let next = await gen.next();
       while (!next.done) {
         const proposal = next.value;
-        if (proposal.type === 'external' && proposal.landed && !effectClass.startsWith('external')) {
-          // A capability declaring a non-external class does not get to claim it touched
-          // the world. Accepting this recorded a landing that protection then ignored —
-          // because protection keys off the declared CLASS — so the same external effect
-          // could be repeated freely (docs/20 F-19, found by differential testing).
-          //
-          // The class is a negotiated manifest property, fixed before the invocation; the
-          // proposal is per-yield and untrusted. Where they disagree, the manifest wins
-          // and the disagreement is journaled.
-          this.commit(familyId, execId, [{
-            kind: 'policy.denied', invocationId, grantId: grant.id,
-            payload: {
-              reason: 'external-landing-from-non-external-class',
-              effectKey, effectClass, descriptor: proposal.descriptor,
-            },
-          }]);
-          next = await gen.next(undefined);
-          continue;
-        }
         if (proposal.type === 'external' && proposal.landed) {
+          // A landing reported by a capability whose DECLARED CLASS is not external is a
+          // misdeclaration. The first fix for that (F-19) refused the landing and recorded
+          // only a policy denial — which was worse than the bug it fixed. The original bug
+          // recorded a true fact and failed to act on it; the fix DESTROYED the fact, so
+          // `hasLanded` was false, protection never engaged, and the next attempt hit the
+          // world again (docs/20 F-22, found by adversarial review).
+          //
+          // A report that the world changed is never discarded. Instead the effect is
+          // recorded at the strictest class — irreversible — so that protection engages,
+          // and the misdeclaration is journaled beside it. Punishing a bad manifest by
+          // forgetting what it told us is not a safety measure.
+          const misdeclared = !effectClass.startsWith('external');
+          const landedClass: EffectClass = misdeclared ? 'external-irreversible' : effectClass;
+          const drafts: Draft[] = [];
+          if (misdeclared) {
+            drafts.push({
+              kind: 'policy.denied', invocationId, grantId: grant.id,
+              payload: {
+                reason: 'external-landing-from-non-external-class',
+                effectKey, declaredClass: effectClass, recordedAs: landedClass,
+                descriptor: proposal.descriptor,
+              },
+            });
+          }
           // B3: world truth commits AT YIELD. A later suspension, crash or failure
           // cannot erase it, because it is no longer a candidate.
           //
@@ -497,18 +566,19 @@ export class S1Kernel {
           // the world — a capability re-entered after suspension is contractually required
           // to consult `ctx.resume` and skip work it already did. That obligation lives in
           // the capability contract, and tests/s1-effects E7 pins the containment.
-          this.commit(familyId, execId, [
+          drafts.push(
             hasLanded(this.family(familyId), effectKey)
               ? { kind: 'effect.deduplicated' as const, invocationId, grantId: grant.id,
                   payload: { effectKey, reason: 're-yielded-after-resume', descriptor: proposal.descriptor } }
               : { kind: 'effect.landed' as const, invocationId, grantId: grant.id,
-                  payload: { effectKey, effectClass, descriptor: proposal.descriptor } },
-          ]);
+                  payload: { effectKey, effectClass: landedClass, descriptor: proposal.descriptor } },
+          );
+          this.commit(familyId, execId, drafts);
           next = await gen.next(undefined);
           continue;
         }
         if (proposal.type === 'delegate') {
-          const outcome = await this.delegate(familyId, execId, grant, proposal, a.depth, invocationId);
+          const outcome = await this.delegate(familyId, execId, grant, proposal, a.depth, invocationId, effectKey);
           next = await gen.next(outcome);
           continue;
         }
@@ -519,6 +589,22 @@ export class S1Kernel {
     } catch (err) {
       this.staged.delete(invocationId);
       if (err instanceof CrashError) throw err;
+      // A COMMIT FAILURE IS NOT AN INVOCATION FAILURE.
+      //
+      // `settle()` decides whether the world was touched by reading the projection, and
+      // the projection only advances AFTER a durable write returns. So a storage error
+      // that leaves the bytes durable but loses the ack — fsync timeout, replicated-log
+      // ack loss, network FS reset, the single most ordinary durable-storage fault —
+      // left memory saying "not landed" while the journal said "landed". Settlement then
+      // emitted `effect.released`, the fold deleted the claim, and the orchestrator's
+      // perfectly correct retry charged the card a second time. One process, one kernel,
+      // ZERO concurrency (docs/20 F-27, found by adversarial review).
+      //
+      // The kernel cannot tell "not written" from "written, ack lost". So it stops
+      // claiming it can: a commit failure is fail-stop for this invocation. The claim
+      // stays held, nothing is released, and the operator resolves it through the
+      // uncertainty path — which is what that path is for.
+      if (err instanceof CommitFailedError) throw err;
       return this.settle(familyId, execId, invocationId, grant.id, effectKey, effectClass, reservation,
         { status: 'failed', error: String(err) });
     }
@@ -529,6 +615,7 @@ export class S1Kernel {
   private async delegate(
     familyId: FamilyId, execId: ExecutionId, parentHandle: GrantHandle,
     proposal: Extract<EffectProposal, { type: 'delegate' }>, depth: number, parentInvocation: InvocationId,
+    parentEffectKey: EffectKey,
   ): Promise<{ state: InvocationState; output?: unknown; error?: string | undefined }> {
     const fam = this.family(familyId);
     const parent = fam.grants.get(parentHandle.id)!;
@@ -550,8 +637,15 @@ export class S1Kernel {
       return { state: 'failed', error: String(err) };
     }
     try {
+      // The default delegation step MUST be stable across retries of the parent. It was
+      // `delegate:${parentInvocation}`, and an invocation id is fresh on every attempt —
+      // so the kernel itself minted a nonce into the effect key of every delegated
+      // external effect, and a retried parent re-charged every irreversible child beneath
+      // it (docs/20 F-24, found by adversarial review). Deriving it from the parent's
+      // EFFECT KEY makes it a function of the work, not of the attempt.
+      const step = proposal.step ?? `delegate:${parentEffectKey}:${proposal.capabilityId}`;
       const out = await this.invoke(execId, proposal.capabilityId, proposal.request, child,
-        { step: proposal.step ?? `delegate:${parentInvocation}` }, depth + 1);
+        { step }, depth + 1);
       return { state: out.state, output: out.output, error: out.error };
     } catch (err) {
       if (err instanceof CrashError) throw err;
@@ -605,7 +699,15 @@ export class S1Kernel {
             drafts.push({ kind: 'state.updated', invocationId, grantId, payload: { key: p.key, value: p.value } });
             break;
           case 'usage':
-            for (const [u, v] of Object.entries(p.units)) usage[u] = (usage[u] ?? 0) + v;
+            for (const [u, v] of Object.entries(p.units)) {
+              // A hostile capability reaches the ledger through this path too (F-28).
+              if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+                drafts.push({ kind: 'policy.denied', invocationId, grantId,
+                  payload: { reason: 'non-finite-usage-declaration', unit: u, declared: String(v) } });
+                continue;
+              }
+              usage[u] = (usage[u] ?? 0) + v;
+            }
             break;
           case 'evidence':
             evidenceSeen = true;
@@ -646,11 +748,16 @@ export class S1Kernel {
     // burning the reservation on every transient failure would make retries eat the
     // budget. Failures stay bounded because `invocations` is always reserved and always
     // charged (tests G6, G14).
-    const units = this.caps.get(inv?.capabilityId ?? '')?.manifest.units;
+    // The metering policy comes from the INVOCATION RECORD, negotiated at admission —
+    // not from `this.caps`, which is process memory a restart re-supplies from the caller.
+    const negotiatedMetered = new Set(inv?.meteredUnits ?? []);
     const cappedUsage: Record<string, number> = {};
     for (const [unit, held] of Object.entries(reservation)) {
       const declared = usage[unit];
-      const metered = unit === 'invocations' ? true : units?.[unit]?.metered === true;
+      // `invocations` is metered BY THE KERNEL: it counts them itself, so it does not
+      // need — or accept — a capability's word about them. This is the one unit whose
+      // policy the manifest cannot set, and it is deliberate (ADR-026 §4).
+      const metered = unit === 'invocations' ? true : negotiatedMetered.has(unit);
       if (declared !== undefined && declared > held) {
         drafts.push({ kind: 'policy.denied', invocationId, grantId,
           payload: { reason: 'usage-exceeds-reservation', unit, declared, reserved: held } });
@@ -663,10 +770,21 @@ export class S1Kernel {
     }
     for (const [unit, declared] of Object.entries(usage)) {
       if (reservation[unit] !== undefined) continue;
-      // Declared against a unit nobody reserved: unauthorized, so it settles at nothing
-      // and is recorded. The capability's manifest should have declared the unit.
+      // Usage declared in a unit nobody reserved. This settled at NOTHING, which made
+      // budgets fail OPEN in the most ordinary configuration there is: a capability that
+      // declares no `units` at all, against a grant that limits money. Five invocations
+      // moved $25,000 against a $5 limit and the ledger reported the budget untouched
+      // (docs/20 F-23, found by adversarial review).
+      //
+      // ADR-026 §4 was careful that an ungranted unit fails CLOSED and silent about this
+      // direction, which failed open. The consumption is real and the grant limits it, so
+      // it is charged — capped at what remains, since nothing more was ever authorised —
+      // and the missing reservation is journaled as the manifest defect it is.
+      const room = remaining(fam, grantId, unit);
+      const charged = Math.max(0, Math.min(declared, room));
+      cappedUsage[unit] = charged;
       drafts.push({ kind: 'policy.denied', invocationId, grantId,
-        payload: { reason: 'usage-in-unreserved-unit', unit, declared } });
+        payload: { reason: 'usage-in-unreserved-unit', unit, declared, charged, room } });
     }
 
     const finalDrafts: Draft[] = outcome === 'completed' ? drafts : drafts.filter((d) => d.kind === 'evidence.produced' || d.kind === 'policy.denied');
@@ -787,7 +905,17 @@ export class S1Kernel {
     };
     // Checksum covers the WHOLE record (review #2 finding).
     const checksum = sha({ commitToken: record.commitToken, executionId: execId, familyId, events });
-    this.storage.appendCommit({ ...record, checksum });
+    try {
+      this.storage.appendCommit({ ...record, checksum });
+    } catch (err) {
+      if (err instanceof CrashError) throw err;
+      // Whether these bytes reached the disk is now UNKNOWN, and the projection below
+      // must not advance either way. Wrapping it makes the ambiguity a distinct type the
+      // caller cannot mistake for "the capability failed" (docs/20 F-27).
+      throw new CommitFailedError(
+        `commit ${record.commitToken} for ${execId}: durable outcome unknown (${String(err)})`,
+      );
+    }
 
     // Projections advance ONLY through the fold, after the durable write (B4).
     for (const ev of events) foldEvent(fam, ev);
@@ -801,7 +929,7 @@ export class S1Kernel {
     storage: Storage,
     providers: readonly CapabilityProvider[] = [],
     opts: { quarantine?: boolean } = {},
-  ): { kernel: S1Kernel; uncertain: InvocationId[] } {
+  ): { kernel: S1Kernel; uncertain: InvocationId[]; quarantined?: string[] } {
     const k = new S1Kernel(storage);
     for (const p of providers) k.register(p);
     const { records, corruptionInMiddle } = storage.readJournal(verifyS1Record);
@@ -821,12 +949,61 @@ export class S1Kernel {
       );
     }
 
+    // INTEGRITY IS VERIFIED WHILE FOLDING, per event.
+    //
+    // B6's ratified resolution said "verify the chain while folding", and only the
+    // record-level checksum had been implemented. The gap was total: `payloadHash` was
+    // written on every event and read by nothing outside the test suite, and the record
+    // checksum links a record to itself and to nothing before it. So a payload could be
+    // rewritten in place with the hash left alone, and whole commit records could be
+    // DELETED from the middle of the journal, and recovery accepted both in silence —
+    // in the deletion case losing a landing and charging the card again
+    // (docs/20 F-31, F-32, found by adversarial review).
+    //
+    // The chain already carried the evidence. Nothing was reading it.
+    const chainTip = new Map<ExecutionId, { seq: number; hash: string }>();
+    /** Executions whose chain broke; nothing after the break is verifiable. */
+    const stopped = new Set<ExecutionId>();
+    const quarantined: string[] = [];
+
     for (const rec of records) {
       const r = rec as { familyId: FamilyId; events: S1Event[] };
       if (r.familyId === undefined) continue;          // not an S1 record
       let fam = k.families.get(r.familyId);
       if (fam === undefined) { fam = emptyFamily(r.familyId); k.families.set(r.familyId, fam); }
       for (const ev of r.events) {
+        // Once an execution's chain is broken, everything after the break is unverifiable
+        // — its `prev` links to a hash we can no longer confirm. Under quarantine the
+        // recovered state is therefore the PROVABLY INTACT PREFIX, not "everything except
+        // the bad record". Folding past a hole is the silent truncation B6 exists to stop.
+        if (stopped.has(ev.executionId)) continue;
+
+        const fail = (why: string): void => {
+          const e = new JournalIntegrityError(`execution ${ev.executionId}: ${why}`);
+          if (opts.quarantine !== true) throw e;
+          stopped.add(ev.executionId);
+          quarantined.push(e.message);
+        };
+
+        const tip = chainTip.get(ev.executionId) ?? { seq: 0, hash: 'genesis' };
+        const { payload: _p, integrity, ...rest } = ev as S1Event & Record<string, unknown>;
+        const tombstoned = (ev.payload as { redacted?: boolean }).redacted === true;
+
+        if (ev.familyId !== r.familyId) {
+          fail(`event ${ev.id} claims family ${String(ev.familyId)} inside a record for ${String(r.familyId)}`);
+        } else if (ev.seq !== tip.seq + 1) {
+          fail(`seq ${String(ev.seq)} follows ${String(tip.seq)} — a record has been lost, duplicated or reordered`);
+        } else if (ev.integrity.prev !== tip.hash) {
+          fail(`chain broken at seq ${String(ev.seq)}`);
+        } else if (sha({ ...rest, prev: integrity.prev }) !== ev.integrity.self) {
+          fail(`self hash mismatch at seq ${String(ev.seq)}`);
+        } else if (!tombstoned && sha(canonical(ev.payload)) !== ev.payloadHash) {
+          fail(`payload at seq ${String(ev.seq)} does not match its committed hash`);
+        }
+        if (stopped.has(ev.executionId)) continue;
+
+        chainTip.set(ev.executionId, { seq: ev.seq, hash: ev.integrity.self });
+
         foldEvent(fam, ev);
         k.familyOf.set(ev.executionId, r.familyId);
         const n = Number(ev.id.split('_')[1] ?? 0);
@@ -843,7 +1020,15 @@ export class S1Kernel {
           if (inv.state !== 'dispatched') continue;
           const claim = fam.claims.get(inv.effectKey);
           const landed = claim?.state === 'landed';
-          if (landed || requiresExclusiveClaim(inv.effectClass)) {
+          // EVERY dispatched invocation is triaged, not only the exclusive ones. A
+          // non-exclusive invocation left `dispatched` by a crash was unreachable by
+          // resume (not suspended), by resolveUncertainty (not uncertain) and by cancel
+          // (only read at settlement), so its claim stayed held and its reservation was
+          // never released. Five crashes permanently exhausted a five-invocation grant
+          // with no reconciliation path (docs/20 F-30, found by adversarial review).
+          // A safe class's outcome is unknown too; what differs is that resolving it is
+          // cheap, not that it needs no resolution.
+          {
             k.commit(fam.familyId, exec.executionId, [{
               kind: 'invocation.uncertain', invocationId: inv.id, grantId: inv.grantId,
               payload: { effectKey: inv.effectKey, effectClass: inv.effectClass, landed,
@@ -854,7 +1039,7 @@ export class S1Kernel {
         }
       }
     }
-    return { kernel: k, uncertain };
+    return { kernel: k, uncertain, ...(quarantined.length > 0 ? { quarantined } : {}) };
   }
 
   // -------------------------------------------------------------------------

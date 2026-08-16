@@ -320,6 +320,69 @@ test('attack A10: a capability cannot reach the kernel through its context', asy
   assert.equal(seen.includes('storage'), false);
 });
 
+test('attack A12: a capability CAN assert a landing that never happened, and it is permanent', async () => {
+  // The converse of A5, and the uncomfortable one. F-19 stopped a capability claiming a
+  // landing its CLASS forbids. It does not — and cannot — stop one whose class permits
+  // external effects from reporting a touch that never occurred: the kernel is not on the
+  // network path and has no way to check.
+  //
+  // The consequence is permanent, because Wave S1 deliberately closed every route back:
+  // `abandon-failed` is refused when a landing exists, the fold independently refuses to
+  // free a landed key, and `allowReplayOfProtected` is unimplemented. Each is individually
+  // right; together they make an unfalsifiable assertion by untrusted code irreversible.
+  //
+  // The blast radius is bounded — a capability can only poison keys derived from its own
+  // (capabilityId, step, request) — but within that radius it is a real denial of service
+  // on the caller, for the life of the journal. Stated here rather than left to be
+  // discovered, and asserted so that a future mechanism for reversing it has a test to turn.
+  const world = new World();
+  const storage = new Storage();
+  const k1 = new S1Kernel(storage);
+  k1.register({
+    manifest: {
+      id: 'liar', version: '1.0.0',
+      traits: {
+        effectClass: 'external-irreversible', probeable: false, compensatable: false,
+        resumable: true, streaming: false, cancellable: true, externallyStateful: false,
+      },
+      axes: {},
+    },
+    async *invoke(): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
+      // Touches nothing. Reports a landing anyway, then fails.
+      yield { type: 'external', descriptor: 'charge', landed: true };
+      return { status: 'failed', error: 'never actually called anyone' };
+    },
+  });
+  const exec = k1.createExecution();
+  const familyId = k1.familyFor(exec).familyId;
+  const grant = k1.issueGrant(exec, { rights: ['pay'], limits: { invocations: 20 } });
+
+  const out = await k1.invoke(exec, 'liar', { n: 1 }, grant, { step: 'a' });
+  assert.equal(out.state, 'failed');
+  assert.equal(world.count('charge'), 0, 'the world was never touched');
+
+  const key = sha({ cap: 'liar', step: 'a', request: { n: 1 } }) as never;
+  assert.equal(k1.isProtected(exec, key), true, 'yet the key is protected on the capability\'s word alone');
+
+  // Every route back is closed, by design.
+  await assert.rejects(
+    () => k1.invoke(exec, 'liar', { n: 1 }, grant, { step: 'a' }),
+    (e: unknown) => e instanceof ClaimDeniedError,
+    'retry: refused',
+  );
+  const child = k1.fork(exec, 1);
+  await assert.rejects(
+    () => k1.invoke(child, 'liar', { n: 1 }, k1.rehydrateGrant(child, grant.id), { step: 'a' }),
+    (e: unknown) => e instanceof ClaimDeniedError,
+    'fork: refused',
+  );
+
+  // And it survives a cold start, because it is a committed record like any other.
+  const { kernel: k2 } = S1Kernel.recover(storage, []);
+  assert.equal(k2.isProtected(exec, key), true, 'permanent for the life of the journal');
+  check(k2, familyId);
+});
+
 test('attack A11: an operator cannot assert away a durable landing', async () => {
   // Authority over the record has limits. An operator resolves an unknown OUTCOME; they
   // do not get to overrule what the journal says happened to the world.

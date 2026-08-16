@@ -444,3 +444,55 @@ frozen now.
 manifests for the four MVP adapters only; the community catalog is a governance-workstream
 deliverable, not a kernel promise. Enforcement badges appear only on probe-backed axes;
 manifest-trusted axes are explicitly `declared`-grade (ties to A3).
+
+---
+
+## Amendment A15 — Wave S1 (2026-08-16): the record format changed three spine facts
+
+Wave S1 replaced the record format (revision `2026-08-17`) and, in doing so, changed things
+§3 states. Recorded here rather than left to be inferred from code, because an amendment log
+that stops being amended is how a design contract becomes fiction. Found by adversarial
+review of the wave, which observed that five ADRs and a new record format had landed with no
+amendment at all.
+
+**A15.1 — Claim is a tenth kernel object.**
+§3 names nine. The `2026-08-17` format adds **Claim**: an exclusive lease on an effect key,
+acquired at admission before dispatch (ADR-024). It is an object rather than a field of
+Invocation because it has its own identity (`ClaimId`), its own five-state lifecycle
+(`held / landed / uncertain / released / settled`) disjoint from `InvocationState`, and —
+decisively — **its own lifetime**: claims are keyed by effect key, not by invocation, and a
+landed or settled claim outlives its holder permanently. It passes the Liedtke admission
+test: exclusivity before dispatch cannot be provided by userland, because userland cannot
+write authoritative truth.
+
+**A15.2 — Family is a kernel object, and it is now the single-writer scope.**
+§3 object 6 defines **Cell** as "keyed, single-writer, stateful execution scope". The S1
+concurrency contract is *one writer per **family*** — a family being a lineage tree: a root
+execution plus every execution forked from it, transitively. The single-writer boundary
+therefore moved from the execution to the lineage tree, and the authoritative ledgers
+(claims, landed effects, grants, terminal outcomes) hang off the family rather than the
+execution.
+
+This follows from ADR-025's argument and is not incidental: if protected effects and grant
+budgets are family-scoped because *the external world is not forked*, then the unit of
+serialization has to be the family too, or two executions in one tree could race on the
+ledgers that bind them both. Cell remains per-execution; what changed is which scope owns
+the ledgers and which scope admits one writer.
+
+**A15.3 — Checkpoint is not implemented in the `2026-08-17` format.**
+§3 object 8 and ADR-002 (normative for recovery) both specify **Checkpoint**. The S1 kernel
+has no checkpoint API: `fork(parentExec, cutSeq)` replaced `fork(checkpointId, opts)`, and
+inherited state is materialised into the child's own first commit record instead of being
+read from a checkpoint blob — which is what made forked lineages reconstructable from the
+journal alone (docs/20 F-8). The event kind `checkpoint.cut` is declared in the format and
+never emitted.
+
+This may well be the better design; the amendment does not decide that. It records that a
+spine object is currently **declared and absent**, which is the same class of defect Wave S1
+itself named "a specification lie, not a gap" when it found `leaseEpoch` and taint in that
+state. Checkpoint must be reinstated, or removed from §3 and ADR-002 deliberately, before
+the record format is frozen.
+
+**What A15 does NOT change.** The remaining eight objects, the two mechanisms, the
+capability contract, and the kernel's admission rule are untouched. `UnitPolicy` (ADR-026) is
+*not* a new object: it is manifest data on Capability, in the same position as effect class.

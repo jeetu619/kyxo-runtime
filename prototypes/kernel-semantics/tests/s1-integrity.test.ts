@@ -358,3 +358,95 @@ test('B8/I9: the protocol version is stamped on every event and is the format\'s
   const relabelled = { ...ev, protocolVersion: '1999-01-01' };
   assert.notEqual(selfHashOf(relabelled), relabelled.integrity.self);
 });
+
+// ---------------------------------------------------------------------------
+// I11–I14 — integrity on the READ path (found by adversarial review)
+// ---------------------------------------------------------------------------
+
+/** Re-seal a journal so every record passes `verifyS1Record`. An attacker with disk access. */
+function reseal(storage: Storage): void {
+  const raw = (storage as unknown as { journal: string[] }).journal;
+  for (let i = 0; i < raw.length; i += 1) {
+    const rec = JSON.parse(raw[i]!) as { commitToken: string; executionId: string; familyId: string; events: unknown };
+    raw[i] = JSON.stringify({
+      ...rec,
+      checksum: sha({ commitToken: rec.commitToken, executionId: rec.executionId, familyId: rec.familyId, events: rec.events }),
+    });
+  }
+}
+
+test('B6/I11: a payload rewritten in place is refused by recovery, not just by a test', async () => {
+  // docs/20 F-31. `payloadHash` was written on every event and read by NOTHING outside
+  // the test suite — `assertS1Invariants` had zero call sites in `src/`. So the whole B8
+  // apparatus was inert in production: rewrite a payload, leave the hash alone, recompute
+  // only the record checksum, and recovery accepted it in silence. A grant's limits could
+  // be raised and a landing's class downgraded that way.
+  const f = setup();
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'a' }, f.grant, { step: 'a' });
+
+  const raw = (f.storage as unknown as { journal: string[] }).journal;
+  const idx = raw.findIndex((l) => l.includes('"kind":"state.updated"'));
+  raw[idx] = raw[idx]!.replace('"value":"a"', '"value":"tampered"');
+  reseal(f.storage);
+
+  assert.equal(f.storage.readJournal(verifyS1Record).discarded, 0, 'the record-level checksum is happy');
+  assert.throws(
+    () => S1Kernel.recover(f.storage, [noteTaker()]),
+    /does not match its committed hash/,
+    'the read path must verify the payload hash it went to the trouble of writing',
+  );
+});
+
+test('B6/I12: deleting a whole commit record is detected', async () => {
+  // docs/20 F-32. The record checksum links a record to ITSELF and to nothing before it,
+  // so records were individually valid and collectively unordered. Deleting the records
+  // carrying effect.claimed and effect.landed left every survivor valid, recovery
+  // succeeded, protection was gone, and the next attempt charged again. B6 held against
+  // bit-rot and torn writes, and against none of the failure modes an append-only log
+  // actually has.
+  const f = setup();
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'a' }, f.grant, { step: 'a' });
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'b' }, f.grant, { step: 'b' });
+
+  const raw = (f.storage as unknown as { journal: string[] }).journal;
+  raw.splice(2, 1);                       // excise a record from the middle
+  reseal(f.storage);
+
+  assert.equal(f.storage.readJournal(verifyS1Record).discarded, 0, 'every surviving record is valid');
+  assert.throws(
+    () => S1Kernel.recover(f.storage, [noteTaker()]),
+    /lost, duplicated or reordered/,
+    'a hole in the sequence is a hole in the history',
+  );
+});
+
+test('B6/I13: reordering records is detected', async () => {
+  const f = setup();
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'a' }, f.grant, { step: 'a' });
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'b' }, f.grant, { step: 'b' });
+
+  const raw = (f.storage as unknown as { journal: string[] }).journal;
+  const tmp = raw[2]!; raw[2] = raw[3]!; raw[3] = tmp;
+  reseal(f.storage);
+
+  assert.throws(() => S1Kernel.recover(f.storage, [noteTaker()]), /lost, duplicated or reordered|chain broken/);
+});
+
+test('B6/I14: quarantine recovers the provably intact prefix, and says what it dropped', async () => {
+  // Quarantine is not "everything except the bad record" — folding past a hole is the
+  // silent truncation B6 exists to stop. Everything after a break links to a hash that can
+  // no longer be confirmed, so the recovered state stops at the break and names it.
+  const f = setup();
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'a' }, f.grant, { step: 'a' });
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'b' }, f.grant, { step: 'b' });
+
+  const raw = (f.storage as unknown as { journal: string[] }).journal;
+  raw.splice(2, 1);
+  reseal(f.storage);
+
+  const { kernel, quarantined } = S1Kernel.recover(f.storage, [noteTaker()], { quarantine: true });
+  assert.ok(quarantined !== undefined && quarantined.length > 0, 'the operator is told what was dropped');
+  assert.match(quarantined[0]!, /lost, duplicated or reordered/);
+  const exec = kernel.familyFor(f.exec).executions.get(f.exec)!;
+  assert.ok(exec.seq < 12, `state stops at the break, saw seq ${String(exec.seq)}`);
+});

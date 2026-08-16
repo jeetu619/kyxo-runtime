@@ -150,7 +150,8 @@ export class S1Model {
     invocationId: string, key: string, cls: ModelEffectClass, grantId: string,
     unitPolicy: Record<string, ModelUnitPolicy>, estimate: Record<string, number>,
   ): ModelOutcome {
-    if (exclusive(cls) && this.isProtected(key)) return { kind: 'denied', reason: 'protected' };
+    // Not gated on the newcomer's class: protection is a property of what LANDED.
+    if (this.isProtected(key)) return { kind: 'denied', reason: 'protected' };
 
     if (!exclusive(cls) && this.terminalOutcome.has(key)) return { kind: 'deduplicated' };
 
@@ -178,12 +179,20 @@ export class S1Model {
     return { kind: 'admitted', dispatched: true };
   }
 
-  /** The capability touched the world. Recorded at the moment it is reported. */
+  /**
+   * The capability touched the world. Recorded at the moment it is reported.
+   *
+   * A capability whose declared class is NOT external may still report a landing. That is
+   * a misdeclaration, but the report is about the world and is never discarded: it is
+   * recorded at the strictest class so protection engages.
+   */
   land(invocationId: string): void {
     const inv = this.invocations.get(invocationId);
     if (inv === undefined) return;
+    const effective: ModelEffectClass =
+      inv.cls.startsWith('external') ? inv.cls : 'external-irreversible';
     if (!this.landed.has(inv.key)) {
-      this.landed.set(inv.key, inv.cls);
+      this.landed.set(inv.key, effective);
       const c = this.claims.get(inv.key);
       if (c !== undefined) c.state = 'landed';
     }

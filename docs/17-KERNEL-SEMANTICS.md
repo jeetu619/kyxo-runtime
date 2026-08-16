@@ -5,7 +5,7 @@ Status: **NORMATIVE DRAFT v0**, 2026-08-16. Protocol revision `2026-08-16`.
 > **SUPERSEDED IN PART by Wave S1 (2026-08-16). Record format revision `2026-08-17`.**
 >
 > This document describes the phase-2 record format. Wave S1 replaced that format to resolve
-> freeze blockers B1, B2, B3, B4, B5, B6, B8, B9a and B9b. Where this document and the S1
+> freeze blockers B1, B2, B3, B4, B5, B6, B9a and B9b, and the redaction half of B8. Where this document and the S1
 > kernel disagree, **the S1 kernel governs** under the precedence rule (doc 24 §2), and the
 > disagreement is one of these:
 >

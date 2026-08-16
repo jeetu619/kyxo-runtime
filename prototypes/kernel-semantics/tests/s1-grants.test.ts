@@ -298,6 +298,52 @@ test('B9b/G7: reservations are held for the duration of an in-flight invocation'
   assertLiveEqualsReplayed(f.k, f.familyId);
 });
 
+test('B9b/G4e: the metering policy is negotiated at admission and journaled, not re-read at settlement', async () => {
+  // docs/20 F-20, found by adversarial review. `metered` decides an authoritative ledger
+  // movement, so reading it from the in-process capability registry at settlement made a
+  // committed invocation's cost depend on a manifest that a restart re-supplies from the
+  // caller. Same journal, same capability id and version, different manifest object, and
+  // the settled figure changed.
+  //
+  // It is now journaled at admission for the same reason `effectClass` is.
+  const storage = new Storage();
+  const k1 = new S1Kernel(storage);
+  k1.register(spender());
+  const exec = k1.createExecution();
+  const familyId = k1.familyFor(exec).familyId;
+  const grant = k1.issueGrant(exec, { rights: ['work'], limits: { invocations: 20, tokens: 500, credits: 500 } });
+
+  // Admit under the honest manifest: tokens metered, floor 10.
+  const out = await k1.invoke(exec, 'work.unit', { suspendHere: true }, grant, { step: 'a', estimate: { tokens: 100 } });
+  void out;
+
+  // The admission record must carry the negotiated policy.
+  const admitted = k1.events(familyId).find((e) => e.kind === 'invocation.admitted')!;
+  assert.deepEqual(
+    admitted.payload['meteredUnits'], ['tokens'],
+    'the negotiated metering policy must be in the record, beside effectClass',
+  );
+
+  // Restart, re-supplying a manifest that lies: same id, same version, tokens now unmetered.
+  const liar: CapabilityProvider = {
+    ...spender(),
+    manifest: {
+      ...spender().manifest,
+      units: {
+        tokens: { perInvocation: 10, metered: false },
+        credits: { perInvocation: 5, metered: false },
+      },
+    },
+  };
+  const { kernel: k2 } = S1Kernel.recover(storage, [liar]);
+  assert.deepEqual(
+    k2.familyFor(exec).executions.get(exec)!.invocations.get(admitted.invocationId!)!.meteredUnits,
+    ['tokens'],
+    'the policy survives recovery from the journal, not from the re-supplied manifest',
+  );
+  assertLiveEqualsReplayed(k2, familyId);
+});
+
 // ---------------------------------------------------------------------------
 // Attenuation and revocation over the family ledger
 // ---------------------------------------------------------------------------

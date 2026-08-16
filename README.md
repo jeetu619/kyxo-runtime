@@ -63,7 +63,7 @@ prototypes/
 | Architectural thesis | **RATIFIED ENOUGH TO PROCEED** — BUILD WITH CHANGES (`docs/01`, ADR-021) |
 | Consumer boundaries | **RATIFIED** (`docs/23`, ADR-022, ADR-023) |
 | Executable semantic direction | **VALIDATED WITH KNOWN BLOCKERS** (`docs/17`–`20`) |
-| Record format | **NOT READY TO FREEZE** — revision `2026-08-17`; 9 of 11 blocker clusters resolved, 2 partial, 1 unchanged (`docs/25`) |
+| Record format | **NOT READY TO FREEZE** — revision `2026-08-17`; 8 of 11 blocker clusters resolved, 2 partial, 1 unchanged (`docs/25`) |
 | Production runtime | **NOT STARTED** |
 | Next engineering phase | **Independent adversarial review of the `2026-08-17` format** (`docs/25` §10) |
 

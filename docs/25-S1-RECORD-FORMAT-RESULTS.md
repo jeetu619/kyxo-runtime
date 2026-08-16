@@ -230,7 +230,7 @@ The 52 findings cluster into the eleven headings of doc 22 §2. Status after thi
 | B9b | Declared usage settled without validation | **RESOLVED** | Every unit reserved and admission-checked; settlement capped at the reservation; metered/unmetered distinction removes reliance on capability honesty. |
 | B9 | No time | **UNCHANGED** | No wall clock, deadlines, timers or heartbeats. `occurredAt` is still a logical counter. Out of scope for this wave; doc 08's promises remain unmet. |
 
-**Nine resolved, two partial, one unchanged.**
+**Eight resolved, two partial, one unchanged** — eleven clusters.
 
 A note on the arithmetic: doc 22 counted 52 individual findings clustering into these
 eleven headings, and this table reclassifies the **clusters**, which is the unit at which
@@ -260,8 +260,14 @@ Doc 22's fourteen criteria, restated against current evidence:
 | 13 | Format/version migration strategy | FAILED | **FAILED** | Still no migration mechanism. Deliberately unaddressed: there is no data to migrate, and inventing a mechanism before there is a second format to migrate *to* would be speculative |
 | 14 | Adversarial re-review passes | FAILED | **NOT RUN** | The new format has not been through an independent adversarial review |
 
-**Score: 8 PASS, 4 PARTIAL, 1 FAILED, 1 NOT RUN.** Doc 22 had 7 of 14 failing or partial;
-6 of 14 are now.
+**Score: 8 PASS, 4 PARTIAL, 1 FAILED, 1 NOT RUN.** Six of fourteen are failing, partial or
+not run; ten of fourteen were before.
+
+(Doc 22's summary line says "7 of 14 criteria fail or are partial", but its own table tallies
+4 PASS + 6 PARTIAL + 4 FAILED = **10 of 14**. That error is on `main` and predates this wave;
+it is named here rather than corrected in place, because a freeze decision edited after the
+fact stops being evidence. It understates the prior baseline, so the improvement this wave
+made is slightly larger than doc 22's summary implies, not smaller.)
 
 ### Decision: **STILL NOT READY TO FREEZE**
 
@@ -345,22 +351,24 @@ Architecturally out of scope and still owed:
 
 ## 9. Governing constraints, checked
 
-The wave was given eleven constraints. Each still holds, with the evidence:
+The wave was given fourteen constraints. Each still holds, with the evidence:
 
 | Constraint | Evidence |
 |---|---|
-| Capability remains a generic abstraction | `universality.test.ts` static gate; the kernel branches on effect class and unit policy, both declared manifest data |
+| Capability remains a generic abstraction | `universality.test.ts` static gate, **which now globs `src/*.ts`** — it previously named two files and did not read the S1 kernel at all (§4, F-21). The kernel branches on effect class and unit policy, both declared manifest data |
 | Agent is not a kernel primitive | No agent concept anywhere in `src/` |
 | Capability Kind does not determine kernel semantics | Branching is on `effectClass` and `units`, never on identity or kind |
 | Provider identity does not determine kernel semantics | Effect identity is derived from `(capabilityId, step, canonical(request))`; no provider branch exists |
 | Capabilities are pure proposers | `InvokeCtx` carries data only; asserted structurally by `s1-security` A10 |
-| Userland cannot write authoritative truth | Every state change goes through `commit()`; F-19 closed the last route by which a proposal could assert something its class did not permit |
+| Userland cannot write authoritative truth | Every state change goes through `commit()`, and F-19 closed the route by which a proposal could assert something its **class** did not permit. **Not "the last route"** — a capability whose class *does* permit external effects can still report a landing that never happened, permanently. See §7 and `s1-security` A12 |
 | Commit authority belongs to the kernel | `commit()` is private; the fold runs only after the durable write |
 | Orchestration remains above the kernel | No scheduler, planner or loop in `src/` |
 | Resume and fork remain distinct | `resume()` continues a lineage and its lease; `fork()` branches one. `s1-fork` F7 asserts a fork cannot seize a suspended invocation's effect |
 | Uncertainty remains explicit | `invocation.uncertain` is a state, never a guess; `s1-effects` E11 |
 | Grants remain generic runtime authority | Rights are opaque strings; units are open; no Kyxo-specific role model exists |
 | Live-state protections survive recovery | I25 and S1-I3; every crash test restarts from storage alone |
+| Kyxo Platform, Kyxo Code and IDE concepts must not enter the kernel | No product, IDE or platform identifier appears in `src/`; verified by grep, and by doc 23's C11 boundary |
+| Prototype code is still prototype code | Nothing under `prototypes/` is imported by a production package (C11); §1 and §10 both refuse to authorise production implementation |
 
 ---
 

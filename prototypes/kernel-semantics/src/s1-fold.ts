@@ -149,6 +149,7 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
         state: 'admitted',
         requiresEvidence: p['requiresEvidence'] === true,
         reservation: {},
+        meteredUnits: (p['meteredUnits'] as string[] | undefined) ?? [],
       });
       break;
 
