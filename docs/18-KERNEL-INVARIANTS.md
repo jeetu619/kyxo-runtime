@@ -10,7 +10,9 @@ true), **test** (what would catch a regression), **failure mode** (what breaks i
 violated).
 
 The mission proposed twenty candidate invariants. Below, each is accepted, amended,
-merged or rejected, with reasons. Four invariants were added from executable evidence.
+merged or rejected, with reasons. Five invariants (I21–I25) were added from executable
+evidence — I25 came from adversarial review #2 and is the one that would have caught two
+of this phase's worst defects.
 
 ---
 
@@ -215,6 +217,26 @@ merged or rejected, with reasons. Four invariants were added from executable evi
   fork-isolation test across 21 seeds.
 - **Failure mode.** F-1: a fork silently reports success for an irreversible effect it
   never performed.
+
+### I25 — The journal is self-sufficient: live state equals recovered state
+- **Rationale.** Any protection a kernel holds only in memory is a protection that lasts
+  until the next restart. This invariant is the general form of two defects that reached
+  production-shaped code before it existed (F-6, F-8).
+- **Enforcement.** Every durable structure is rebuilt by folding committed records; forks
+  materialize inherited authority, effect identity and protected effects into the child's
+  own first commit rather than referencing a checkpoint blob.
+- **Test.** `checkInvariants({deepRecoveryCheck: true})` recovers a shadow kernel from
+  storage and compares cell state, protected effects, effect index and grants per
+  execution. Asserted in `fork.test.ts`; sampled every seventh operation in the property
+  suite (it is O(journal), so running it on every operation would dominate runtime).
+- **Failure mode.** A fork or a restart silently loses protection, and an irreversible
+  effect re-executes with **zero** other invariant violations reported — exactly what F-8
+  did.
+- **Scope caveat.** Meaningful only against the sole writer for a given storage. Two live
+  kernels sharing one journal is not a supported configuration (there is no journal
+  locking), and the stale one would legitimately differ.
+- **History.** Added during adversarial review #2; it found F-9 within one run of being
+  added.
 
 ---
 

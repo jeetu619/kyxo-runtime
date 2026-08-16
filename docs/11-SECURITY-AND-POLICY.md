@@ -331,7 +331,7 @@ lives in `prototypes/kernel-semantics/`; the falsification record is 20-SEMANTIC
 
 Scale for the whole suite: 4,500 coverage operations + 4,800 property operations + 32
 crash-point recoveries, with the full invariant set asserted after **every** operation, plus
-24,000 fuzz operations. Seven findings came out of it, two in the security machinery: F-2
+70,000 fuzz operations. Ten findings came out of it, three in the security machinery: F-2
 (handle forgery, §2.2 I1) and F-3 (delegation computing child budgets from stale authority and
 then swallowing the refusal, §2.5).
 

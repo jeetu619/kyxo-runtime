@@ -22,13 +22,14 @@ KYXO_FUZZ_SEEDS=1000 KYXO_FUZZ_LENGTH=70 node --experimental-strip-types kernel-
 | Suite | Tests | What it establishes |
 |---|---|---|
 | `crash.test.ts` | 6 | Systematic crash sweep (16 write points × clean/torn = 32 recoveries) + landed-but-unrecorded effects, unknown probes, compensation, safe re-lease, checkpoint consistency |
-| `fork.test.ts` | 8 | Cut isolation, parent immutability, protected-effect refusal, explicit override, mandatory dispositions, sibling and nested independence, crash-during-fork, resume-vs-fork distinction |
+| `fork.test.ts` | 9 | Cut isolation, parent immutability, protected-effect refusal, explicit override, mandatory dispositions, sibling and nested independence, crash-during-fork, resume-vs-fork distinction |
 | `dedup.test.ts` | 5 | Six mechanisms kept distinct; CAS dedup preserves per-producer provenance; content-inclusive effect keys; budget not double-charged |
 | `grants.test.ts` | 11 | Handle forgery (3 attacks), attenuation limits, lineage accounting, admission denial, transitive revocation, expiry, fork-vs-revocation, delegation attenuation, two recursion bounds |
-| `universality.test.ts` | 5 | Eight heterogeneous constructs on one path, static no-type-branching gate, malicious capability containment, deny-class policy, mixed-class checkpoint/fork/recovery |
+| `universality.test.ts` | 6 | Eight heterogeneous constructs on one path, static no-type-branching gate, malicious capability containment, deny-class policy, mixed-class checkpoint/fork/recovery, commit gate across suspension |
 | `property.test.ts` | 3 | 120 seeded sequences × 40 ops with per-operation invariant assertion and a delta-debugging minimizer; differential agreement with the reference model on outcomes, budgets and fork isolation |
 | `coverage.test.ts` | 1 | 150 seeds × 30 ops with a distribution guard that fails if interesting states stop being reached |
-| **Total** | **39** | all passing; TypeScript strict, zero runtime dependencies |
+| `evolution.test.ts` | 5 | Serialization compatibility: unknown kinds/fields tolerated and retained, hash covers unknown fields, torn-record discard, per-event version stamps, unknown lineages materialize |
+| **Total** | **46** | all passing; TypeScript strict, zero runtime dependencies |
 
 **Volume per full run:** 4,500 coverage operations + 4,800 property operations + 32
 crash-point recoveries, with a complete invariant check after **every** operation
@@ -57,9 +58,9 @@ generator degenerates.
 
 ## 2. Design falsifications (the substance of this phase)
 
-Seven findings emerged from execution. Each was a *design* error, not a typo — four of
-them existed in the written specification and would have been frozen into the record
-format.
+Ten findings emerged from execution (F-1…F-10). Each was a *design* error, not a typo,
+and most existed in the written specification and would have been frozen into the record
+format. F-8 and F-10 came from adversarial review #2 and are recorded in §6.
 
 ### F-1 — Inherited irreversible effects were absorbed as silent cache hits
 **Found by:** `fork.test.ts`, "a fork may not silently redo a protected irreversible

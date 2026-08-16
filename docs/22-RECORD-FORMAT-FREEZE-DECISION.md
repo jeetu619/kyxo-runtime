@@ -22,13 +22,13 @@ of those defects into a permanent compatibility obligation.
 |---|---|---|---|
 | 1 | Semantic specification complete | **PARTIAL** | Docs 17–19 exist and are normative, but reviewers found the spec makes claims the format cannot support (redaction without `payloadHash`; lease/epoch fencing declared but absent; taint declared in doc 11, absent in the kernel) |
 | 2 | No unresolved FATAL issues in this area | **FAILED** | 22 FATAL findings, most with working reproductions |
-| 3 | Property tests pass | **PASS** | 45 tests; 9,300+ invariant assertions per run |
+| 3 | Property tests pass | **PASS** | 46 tests; 9,300+ invariant assertions per run |
 | 4 | Deterministic model comparison passes | **PASS** | Differential agreement on outcomes, budgets, fork isolation |
 | 5 | Crash matrix passes | **PARTIAL** | All 15 mission crash points covered, but reviewers showed `recover()` performs no integrity verification and silently skips mid-journal corruption |
-| 6 | Fork tests pass | **PARTIAL** | 8 tests pass; reviewers found three further fork defects (grant ledger reset, revocation not crossing forks, protection scoped to the cut rather than the lineage tree) |
+| 6 | Fork tests pass | **PARTIAL** | 9 tests pass; reviewers found three further fork defects (grant ledger reset, revocation not crossing forks, protection scoped to the cut rather than the lineage tree) |
 | 7 | Dedup tests pass | **PARTIAL** | 5 tests pass; reviewers showed the effect key is claimed at settlement rather than admission, so concurrent duplicates both proceed |
 | 8 | Grant tests pass | **PARTIAL** | 11 tests pass; authority does not survive restart (handles are per-kernel) and fork resets budget ledgers |
-| 9 | Capability-universality tests pass | **PASS** | Eight constructs, static no-branching gate in CI |
+| 9 | Capability-universality tests pass | **PASS** | Eight constructs, static no-branching gate in CI (6 tests) |
 | 10 | Amendment reconciliation complete | **PASS** | A1–A14 applied across docs 02–15 and the ADR index |
 | 11 | Architecture docs agree with executable behaviour | **FAILED** | Doc 17 §2 specifies redaction the format cannot perform; doc 11 §5 claims taint propagation that does not exist |
 | 12 | Serialization evolution strategy exists | **PARTIAL** | Forward compatibility is now tested (doc 20, `evolution.test.ts`), but `schemaVersion` is write-only, there is no per-kind payload versioning, and no upcaster |
@@ -176,7 +176,7 @@ produces no FATAL and no freeze-blocking SERIOUS finding.
 **Estimated shape, not schedule:** S1 is the bulk of the work and touches every record
 type. S2 is mechanical but exacting. S3 is ordinary engineering. The honest statement is
 that the format is roughly one focused phase away from freezable, and that this phase's
-44 findings are the specification for that work.
+52 findings are the specification for that work.
 
 ---
 
@@ -186,6 +186,6 @@ that the format is roughly one focused phase away from freezable, and that this 
   the format now guarantees a breaking change later.
 - **Do not start the production kernel.** The mission's next step was contingent on a
   freeze; that contingency failed.
-- **Do not treat the passing suite as reassurance.** 45 tests passed while the kernel
+- **Do not treat the passing suite as reassurance.** 45 tests passed at the time while the kernel
   double-executed an irreversible effect across a fork restart. The suite was extended
   (I25) precisely because green was not evidence.

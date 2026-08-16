@@ -8,7 +8,7 @@
 > in a separate workstream; until that lands, a body may still describe a superseded mechanism,
 > and in that case the amendment log and the phase-2 ADRs (017–021) govern.
 
-This directory holds the twenty-one ADRs of the Kyxo research program. Every ADR is written from
+This directory holds the twenty-three ADRs of the Kyxo research program. Every ADR is written from
 `research/DESIGN-SPINE.md` (the binding design contract) under the claim-labeling discipline of
 `research/METHODOLOGY.md`. ADRs 001–016 share one format: Title / Status / Context (forces, with
 labeled evidence citations into `research/notes/`) / Decision (imperative) / Alternatives
@@ -137,7 +137,7 @@ the index is never told a superseded mechanism is current.
 | [021](ADR-021-build-vs-extend-re-argued.md) | BUILD vs EXTEND re-argued on executable evidence: a narrower, better-evidenced claim |
 
 See `docs/22-RECORD-FORMAT-FREEZE-DECISION.md` for what these decisions do **not** yet
-settle: the record format is NOT frozen, and 44 findings from adversarial review #2 block it.
+settle: the record format is NOT frozen, and 52 findings from adversarial review #2 block it.
 
 ## Consumer and repository boundaries (2026-08-16)
 
@@ -147,3 +147,41 @@ settle: the record format is NOT frozen, and 44 findings from adversarial review
 | [023](ADR-023-coding-engine-is-ide-independent.md) | The coding engine is IDE-independent; VS Code and JetBrains are clients, and the first client is the CLI |
 
 Elaborated in `docs/23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md`.
+
+---
+
+## Authoritative status register (2026-08-16)
+
+ADR bodies retain the status line they were written with, as decision provenance. **This
+table is the current authoritative status**; `docs/24-PRE-MERGE-RATIFICATION.md` §3 records
+the evidence behind each entry.
+
+| ADR | Decision | Current status |
+|---|---|---|
+| 001 | Agent is not a kernel primitive | **Ratified** — executable |
+| 002 | Journal-first with checkpoint composite | **Accepted as amended** (A1, ADR-018); record shape **blocked** (B1–B4) |
+| 003 | Axis-typed tiered capability manifests | Proposed — not exercised by the phase-2 kernel |
+| 004 | Graph is an orchestration strategy | **Ratified** — executable |
+| 005 | Harness is a behaviour contract and a capability | **Ratified** — executable |
+| 006 | Model adapters are code-bearing plugins | Proposed — no real adapter built |
+| 007 | Protocol strategy: project, don't invent | Proposed |
+| 008 | Context and memory are separate subsystems | Proposed |
+| 009 | Durability by journal injection | **Accepted as amended** (A1); record shape **blocked** |
+| 010 | TypeScript reference kernel, protocol-first | **Accepted as amended** (A4 scoped the replaceability claim) |
+| 011 | Objective as a registered Kind | Proposed |
+| 012 | Verification commit gate | **Ratified** as a decision; **enforcement superseded by ADR-017** |
+| 013 | Object-capability security + taint | ocap **ratified** (executable); **taint unimplemented** (B8) |
+| 014 | Budgets as attenuated quantitative grants | **Accepted as amended** (A2 reserve/settle); lineage across forks **blocked** (B2) |
+| 015 | Delegation is invocation under attenuated grants | **Ratified** — executable |
+| 016 | Single-node kernel, portable checkpoints | Proposed — portability **blocked** by B2/B9a |
+| 017 | Capabilities are pure proposers | **Accepted** |
+| 018 | Resume continues, fork branches | **Accepted** |
+| 019 | Uncertainty is an explicit state | **Accepted** |
+| 020 | Authority is object identity | **Accepted** |
+| 021 | BUILD vs EXTEND re-argued | **Accepted** |
+| 022 | Runtime/consumer boundary | **Accepted** |
+| 023 | Coding engine is IDE-independent | **Accepted** |
+
+"Ratified" means the decision is the baseline and is supported by executable evidence;
+"Proposed" means it stands but has not been executably confirmed — **merging to `main` does
+not promote it**.

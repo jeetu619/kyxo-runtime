@@ -11,9 +11,9 @@ The central question:
 > hard-coded first-class concepts — while the runtime stays simple enough to build, operate,
 > debug and adopt?
 
-This repository currently contains **research, architecture and prototypes only** — deliberately
-no production implementation. See `docs/15-IMPLEMENTATION-ROADMAP.md` for the build plan and
-`docs/01-EXECUTIVE-THESIS.md` for the final recommendation.
+This repository contains **research, architecture and prototypes only** — deliberately no
+production implementation. Nothing under `prototypes/` is production code
+(`prototypes/README.md`).
 
 ## Layout
 
@@ -48,6 +48,7 @@ docs/
   21-AMENDMENT-RECONCILIATION.md  A1-A14 ledger
   22-RECORD-FORMAT-FREEZE-DECISION.md  Freeze gate: NOT READY, with the blocker taxonomy
   23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md  Repository layout, package boundaries, consumers
+  24-PRE-MERGE-RATIFICATION.md    What the merge ratifies, what stays unfrozen, precedence rule
 prototypes/
   README.md               Why nothing here is production code
   kernel/                 Phase-1 universality demo (eight constructs, one invocation path)
@@ -55,17 +56,31 @@ prototypes/
   kernel-semantics/       Phase-2 executable kernel: src/, tests/, reference-model/, fuzz.ts
 ```
 
-## Status
+## Status at a glance
 
-**Phase 1 (architecture): complete.** Recommendation: **BUILD WITH CHANGES** — see
-`docs/01-EXECUTIVE-THESIS.md` and, for the re-argued version, `docs/16-ADR/ADR-021`.
+| Gate | Status |
+|---|---|
+| Architectural thesis | **RATIFIED ENOUGH TO PROCEED** — BUILD WITH CHANGES (`docs/01`, ADR-021) |
+| Consumer boundaries | **RATIFIED** (`docs/23`, ADR-022, ADR-023) |
+| Executable semantic direction | **VALIDATED WITH KNOWN BLOCKERS** (`docs/17`–`20`) |
+| Record format | **NOT READY TO FREEZE** — 52 blocking findings (`docs/22`) |
+| Production runtime | **NOT STARTED** |
+| Next engineering phase | **Wave S1** — record-format completion (`docs/22` §4) |
 
-**Phase 2 (executable kernel semantics): complete.** The semantics are now executable and
-were attacked by six specialist reviewers with the code in hand. Record-format decision:
-**NOT READY TO FREEZE** — `docs/22-RECORD-FORMAT-FREEZE-DECISION.md`. Ten defects were
-found and fixed during the phase; 52 further findings block the freeze and constitute the
-specification for the next phase. The kernel *semantics* largely survived; the *record
-format* did not.
+Merging this to `main` ratifies the architecture, decisions and evidence baseline. It does
+**not** freeze the record format, the kernel ABI, the SDK or any provider API, and it does
+not promote Proposed ADRs. See `docs/24-PRE-MERGE-RATIFICATION.md`.
+
+### How the phases went
+
+**Phase 1 (architecture): complete.** Recommendation: **BUILD WITH CHANGES**
+(`docs/01-EXECUTIVE-THESIS.md`; re-argued on executable evidence in ADR-021).
+
+**Phase 2 (executable kernel semantics): complete.** The semantics were made executable and
+attacked by six specialist reviewers with the code in hand. Ten defects were found and
+fixed during the phase; 52 further findings block the record-format freeze and constitute
+the specification for Wave S1. The kernel *semantics* largely survived; the *record format*
+did not.
 
 Run the executable semantics:
 
@@ -122,16 +137,18 @@ Decisions: `docs/16-ADR/ADR-022-runtime-consumer-boundary.md`,
 
 ## Reading order
 
-1. `docs/01-EXECUTIVE-THESIS.md` — the recommendation, the strongest objections, and the
+1. `docs/24-PRE-MERGE-RATIFICATION.md` — what is decided, what is not, and which artifact
+   wins when two disagree
+2. `docs/01-EXECUTIVE-THESIS.md` — the recommendation, the strongest objections, and the
    answers to the thirty questions the program set out to answer
-2. `research/DESIGN-SPINE.md` — the decisions, ending in the binding Amendment log
-3. `docs/05-KERNEL-PRIMITIVES.md` + `docs/06-CAPABILITY-SPEC.md` — the core design
-4. `docs/07-RUNTIME-ARCHITECTURE.md` — how it fits together
-5. `research/ADVERSARIAL-REVIEW.md` — how hard it was attacked and what survived
+3. `research/DESIGN-SPINE.md` — the decisions, ending in the binding Amendment log
+4. `docs/17-KERNEL-SEMANTICS.md` + `docs/18-KERNEL-INVARIANTS.md` — the normative semantics
+5. `docs/05-KERNEL-PRIMITIVES.md` + `docs/06-CAPABILITY-SPEC.md` — the core design
 6. `docs/23-REPOSITORY-AND-CONSUMER-ARCHITECTURE.md` — where each piece belongs, and who
    consumes the runtime
-7. `docs/16-ADR/` — the consequential decisions, each with alternatives considered
-8. Everything else as reference depth
+7. `research/ADVERSARIAL-REVIEW.md` + `-2.md` — how hard it was attacked and what survived
+8. `docs/16-ADR/` — the consequential decisions, each with alternatives considered
+9. Everything else as reference depth
 
 ## Prototypes
 

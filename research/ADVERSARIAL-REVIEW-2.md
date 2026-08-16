@@ -1,5 +1,11 @@
 # Adversarial Review #2 — full record
 
+> **Note on paths in this record.** Reviewers wrote throwaway reproduction scripts under
+> `/tmp/...`; those scratch files were **not retained** and the paths will not resolve. The
+> findings themselves cite repository-relative sources. Where a reproduction mattered, it
+> was converted into a permanent regression test (see `docs/20` F-8, F-10).
+
+
 Six specialist reviewers were given the executable kernel, its tests and the normative
 documents, and told to break the semantics. They wrote and ran their own attack scripts;
 many findings below carry working reproductions.
@@ -20,7 +26,7 @@ Severity totals: **22 FATAL, 40 SERIOUS, 10 MODERATE, 0 MINOR**; **52 findings b
 
 ### Findings
 
-#### [FATAL] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/kernel.ts:869 (fork) and :1120 (recover) — the `execution.forked` record format
+#### [FATAL] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/kernel.ts:869 (fork) and :1120 (recover) — the `execution.forked` record format
 
 **Attack.** F-6 was fixed through the front door and left the back door open. `recover()` rebuilds each execution from ITS OWN journal records only. A forked child's inherited state (cell, artifacts, effectIndex, protectedEffects, grants) comes exclusively from the checkpoint snapshot blob at fork time and is never written to the child's journal — `execution.forked` carries only {parentExecution, checkpointId, cutSeq, dispositions, definitionHash, replayOverride}. So a restart erases everything the fork inherited.
 
@@ -37,7 +43,7 @@ One logical irreversible charge, executed twice, with no journal evidence that a
 
 **Proposed resolution.** The fork's origin state must be committed, not just referenced. Two viable shapes: (a) `execution.forked` carries the full inherited-state commitment — snapshot ref plus effectIndex entries (key, class, landed, outcome, inherited), protectedEffects, dedupWindow and grant states — so the child's own journal is self-sufficient; or (b) recovery re-hydrates a child from `checkpointId` by loading the durable checkpoint before folding the child's suffix, and `execution.forked` carries a digest of the inherited state that recovery MUST verify against the loaded checkpoint (so a missing or altered checkpoint is a loud failure, not silent amnesia). Either way the fork event must gain an inherited-state digest field before the format is frozen. Then add the universal law test (below) that recovered state deep-equals live state for every execution.
 
-#### [FATAL] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/storage.ts:25 (canonical), :74 (appendCommit), :125 (readJournal)
+#### [FATAL] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/storage.ts:25 (canonical), :74 (appendCommit), :125 (readJournal)
 
 **Attack.** The record format has no encoding contract. `canonical()` uses `Object.keys()`, so EVERY non-plain object collapses to `{}`, and `appendCommit` writes with `JSON.stringify` while `readJournal` re-validates with `canonical` — two different encodings on the two sides of the durability boundary.
 
@@ -51,7 +57,7 @@ One logical irreversible charge, executed twice, with no journal evidence that a
 
 **Proposed resolution.** Define the payload value domain normatively in doc 17 §2 and enforce it at the proposal boundary: a closed set (null, boolean, finite number, string, array, plain object with string keys), with an explicit encoding for anything else (ISO-8601 tagged, or CAS-by-reference). Reject out-of-domain proposals at STAGING time with a typed KernelError so the failure is attributable to the capability and settles as `failed` — never after dispatch and never as `uncertain`. Then make write and read use the SAME encoder: store `canonical(record)`, validate with `canonical`, and add a property test asserting sha(live events) === sha(reloaded events) for every record the kernel writes, plus `readJournal().discarded === 0` for any run with no injected crash. Separately, recovery MUST reject a journal with a seq gap or chain break rather than folding a state that never existed.
 
-#### [SERIOUS] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/kernel.ts:1007 (applyToProjection), :761 (resolveUncertainty), :316 (effect key)
+#### [SERIOUS] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/kernel.ts:1007 (applyToProjection), :761 (resolveUncertainty), :316 (effect key)
 
 **Attack.** There are two different folds and they disagree. `applyToProjection` — the function the code comments call "The fold. Used identically by live commit, recovery, and fork" — does not maintain effectIndex, dedupWindow, or protectedEffects at all. Those are maintained ad hoc in `settle()`/`fork()` on the live path and by a SECOND, differently-written rebuild inside `recover()` (kernel.ts:1171-1187). Any path that writes committed events without going through `settle()` therefore updates one fold and not the other.
 
@@ -61,7 +67,7 @@ Second instance of the same root cause (/tmp/atk/e-final.ts §W): the effect key
 
 **Proposed resolution.** Make effectIndex/dedupWindow/protectedEffects genuine projections: derive them ONLY inside `applyToProjection`, delete the bespoke rebuild in `recover()` and the ad hoc writes in `settle()`/`fork()`/`resolveUncertainty`. That requires the events to carry the facts the fold needs — `invocation.completed`/`failed`/`canceled` and `invocation.uncertainty.resolved` must all carry {effectKey, effectClass, landedExternal} explicitly rather than relying on a lookup into the invocation table. That is a payload-shape change to four event kinds, hence it must land before the freeze. Also either fold effectClass into the effect-key preimage or reject a second invocation of a known key under a different declared class.
 
-#### [SERIOUS] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/types.ts:183-202 (KernelEvent) and src/kernel.ts:977
+#### [SERIOUS] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/types.ts:183-202 (KernelEvent) and src/kernel.ts:977
 
 **Attack.** There is no schema evolution mechanism of any kind. Grep of the whole prototype: `schemaVersion` appears exactly once outside the type declaration — `schemaVersion: 1,` hardcoded at kernel.ts:977 — and is read by nothing. `protocolVersion` is written into every event and every checkpoint and read by nothing. Zero occurrences of 'migrat' or 'upcast' anywhere in src/, tests/, reference-model/ or fuzz.ts. Recovery reads payloads by positional `as` casts (`p['capabilityId'] as string`, `p['effectClass'] as EffectClass`), so an old record with a missing or renamed field yields `undefined` cast to a type, which then flows into the invocation table and the triage decision — a record written by v1 and read by v2 produces `effectClass: undefined`, which is not in UNSAFE_TO_AUTO_RETRY, so an irreversible effect from an old record recovers as safe. There is also no reader-side behaviour defined for an unknown schemaVersion (accept? reject? quarantine?), and `Checkpoint.protocolVersion` is never compared against PROTOCOL_VERSION at resume or fork — a checkpoint written under any past or future protocol is loaded blindly.
 
@@ -69,7 +75,7 @@ This is what makes several other findings freeze blockers by transitivity: with 
 
 **Proposed resolution.** Before freezing: (1) give each event KIND its own payload schema identity, not one global integer — `schemaVersion` per kind, or a `payloadSchema: 'invocation.completed/2'` field; (2) define reader behaviour for an unknown version normatively (MUST refuse to fold and surface it, never best-effort cast); (3) add an upcast hook point in the recovery path with at least one exercised identity upcaster plus a test that folds a v1 fixture under a v2 reader; (4) make `protocolVersion` load-bearing — resume/fork MUST compare the checkpoint's protocolVersion and refuse or upcast; (5) replace every `as` cast in `applyToProjection`/`recover` with a validating decoder that throws on a missing required field. Freeze the format only once a written-and-tested v1→v2 migration exists.
 
-#### [SERIOUS] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/types.ts:201 (integrity) and src/kernel.ts:989; docs/17-KERNEL-SEMANTICS.md §2
+#### [SERIOUS] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/types.ts:201 (integrity) and src/kernel.ts:989; docs/17-KERNEL-SEMANTICS.md §2
 
 **Attack.** Doc 17 §2 states normatively: "Redaction is performed by tombstoning payload content while preserving the hash chain (the envelope's `payloadHash` continues to attest what was there)." There is no `payloadHash` field in `KernelEvent`. The chain is `self = sha({...base, prev})` where `base` contains the payload INLINE, so redacting any payload necessarily breaks `self` and every link after it.
 
@@ -77,7 +83,7 @@ Repro (/tmp/atk/d-more.ts §Q): write state {path:'pii', content:'SSN 123-45-678
 
 **Proposed resolution.** Add `payloadHash` to the hashed envelope and take the payload OUT of the hash preimage: `self = sha({id, seq, kind, schemaVersion, protocolVersion, executionId, invocationId, correlationId, causationId, actorId, grantId, occurredAt, payloadHash, artifacts, prev})`. Redaction then replaces `payload` with a tombstone while `payloadHash` continues to attest the original bytes and the chain verifies unchanged. Add a `redacted: true` marker and a `redaction.applied` event so erasure is itself journaled, and extend the I6 checker to verify payloadHash against the payload only when not tombstoned. This is a pure envelope change and is the single clearest reason the format cannot be frozen as written.
 
-#### [SERIOUS] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/kernel.ts:995 (record construction) and src/storage.ts:131 (validation)
+#### [SERIOUS] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/kernel.ts:995 (record construction) and src/storage.ts:131 (validation)
 
 **Attack.** The commit record's checksum is `sha(events)` — it does not cover `executionId` or `commitToken`. Recovery then trusts the RECORD-level `executionId` (kernel.ts:1133) to decide which execution a record belongs to, while the integrity checker groups by the EVENT-level `executionId` (invariants.ts:29). An attacker with disk access can re-parent an entire commit record between executions and nothing notices.
 
@@ -89,7 +95,7 @@ The hash chain is intact for both executions (B's own events still chain correct
 
 **Proposed resolution.** Extend the checksum preimage to the whole record: `checksum = sha({commitToken, executionId, events})`. Additionally, recovery MUST verify that every event's own `executionId` equals the record's, and MUST verify the hash chain as it folds (currently `recover()` never recomputes `integrity.self` at all — it just assigns `exec.lastHash = ev.integrity.self`), refusing to fold a record that fails either check rather than reporting it only through the `discarded` count.
 
-#### [SERIOUS] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/types.ts:319 (ForkDisposition) and src/kernel.ts:906-917
+#### [SERIOUS] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/types.ts:319 (ForkDisposition) and src/kernel.ts:906-917
 
 **Attack.** `ForkDisposition = 'adopt' | 're-lease' | 'compensate' | 'abandon'` has no term for a pending invocation that is `suspended`. But `checkpoint()` puts suspended invocations into `pending` (kernel.ts:839), and `fork()` demands a disposition for every pending entry. So forking an execution that is waiting on a human forces you to claim the human answered.
 
@@ -105,7 +111,7 @@ NO HUMAN EVER ANSWERED, and the fork reports the approval as granted, attributed
 
 **Proposed resolution.** Add a `carry` disposition meaning "the suspension crosses the cut unresolved", and make `fork()` copy the suspended InvocationRecord (id, effectKey, effectClass, suspension payload, attempt) into the child so `resumeInvocation` works there. Forbid `adopt`/`abandon` for pending entries whose state is `suspended` — those dispositions describe an external effect whose outcome is unknown, not a question nobody asked. Because `dispositions` is journaled inside `execution.forked` and the checkpoint's `pending[]` would gain the suspension payload, this is a record-format change.
 
-#### [SERIOUS] **[BLOCKS FREEZE]** /home/user/kyxo-runtime/prototypes/kernel-semantics/src/kernel.ts:869-961 (fork) and :252 (revoke)
+#### [SERIOUS] **[BLOCKS FREEZE]** prototypes/kernel-semantics/src/kernel.ts:869-961 (fork) and :252 (revoke)
 
 **Attack.** Fork copies grant state per lineage (`grants: new Map(cp.grants.map(...))`) with each lineage's own reserved/settled ledger, and `revoke()` walks only `exec.grants` for the one execution it is given. Two consequences:
 
@@ -115,7 +121,7 @@ NO HUMAN EVER ANSWERED, and the fork reports the approval as granted, attributed
 
 **Proposed resolution.** Decide the semantics explicitly and put it in the record: either (i) grants are family-scoped — the ledger and the revoked bit are keyed by GrantId across the whole correlationId family, so spend and revocation are shared, which requires a family/ledger identity field on GrantState and on the checkpoint's grants[]; or (ii) grants are lineage-scoped by design — in which case fork MUST attenuate, journaling a `grant.attenuated` (or a new `grant.forked`) event per inherited grant with the child's ceiling, so the multiplication is explicit, bounded and auditable rather than emergent. Either way the checkpoint's `grants[]` shape changes. Also extend the I5 invariant to check the whole family, not one execution.
 
-#### [SERIOUS] /home/user/kyxo-runtime/prototypes/kernel-semantics/src/kernel.ts:725 (resumeInvocation)
+#### [SERIOUS] prototypes/kernel-semantics/src/kernel.ts:725 (resumeInvocation)
 
 **Attack.** `resumeInvocation` ends with `return this.settle(exec, invocationId, grantState.id, inv.effectKey, inv.effectClass, inv.capabilityId, next.value, {})` — an empty options object. `opts.requiresEvidence` is therefore dropped on every resume. The flag IS durably journaled in `invocation.admitted` (kernel.ts:392) and is simply never read back.
 
@@ -129,7 +135,7 @@ I17 is one of the headline invariants and doc 17 §4 states it as a MUST ("A cap
 
 **Proposed resolution.** Reconstruct the settlement options from committed truth rather than from the caller's argument: read `requiresEvidence` (and any future gate flags) off the `invocation.admitted` event via the invocation record, and have `settle()` take them from there on every path — initial, resume, and any post-recovery re-entry. Persist the gate flags on `InvocationRecord` in `applyToProjection` so they survive recovery. Strengthen I17 to also fire when a gated invocation completes with zero passing evidence, not only with a failing verdict. No format change (the flag is already journaled), so this does not block the freeze — but it must be fixed before anything is built on the commit barrier.
 
-#### [MODERATE] /home/user/kyxo-runtime/prototypes/kernel-semantics/src/kernel.ts:1197-1215 (recovery triage); docs/19-CRASH-RECOVERY-MODEL.md §3 rows 1-2
+#### [MODERATE] prototypes/kernel-semantics/src/kernel.ts:1197-1215 (recovery triage); docs/19-CRASH-RECOVERY-MODEL.md §3 rows 1-2
 
 **Attack.** The triage loop only considers invocations in state `dispatched` AND in UNSAFE_TO_AUTO_RETRY. Everything else is silently abandoned, contradicting two rows of the crash matrix that doc 19 marks as covered by the sweep.
 
@@ -141,7 +147,7 @@ The crash sweep misses both because it only asserts invariants and staging empti
 
 **Proposed resolution.** Implement the triage the spec describes: `admitted` with no dispatch -> commit `grant.released` and mark the invocation failed (it provably never ran); `dispatched` with a safe class -> either re-lease (bump leaseEpoch, commit `invocation.dispatched` again) or mark failed and release, and in both cases return it to the caller in the recover() result alongside `uncertain[]`. Return `{kernel, uncertain, releasable, discarded}`. Then correct doc 19 rows 1-2, or delete the claim.
 
-#### [MODERATE] /home/user/kyxo-runtime/prototypes/kernel-semantics/src/storage.ts:78 (putBlob), :89 (getBlob); src/invariants.ts:92 (I8)
+#### [MODERATE] prototypes/kernel-semantics/src/storage.ts:78 (putBlob), :89 (getBlob); src/invariants.ts:92 (I8)
 
 **Attack.** Blobs are content-addressed but never integrity-checked on read, and CAS dedup treats presence as validity, so a torn blob is durable, undetectable and unrepairable. There is also no cross-store atomicity or repair path between the journal, the blob store and the checkpoint store.
 
@@ -157,7 +163,7 @@ The same mechanism applied to a checkpoint's stateSnapshot yields a checkpoint t
 
 **Proposed resolution.** Verify content on read: `getBlob` MUST recompute sha(parsed) and compare with the ref, throwing a typed IntegrityError on mismatch. `putBlob` MUST re-write when the existing entry fails verification, so a re-run repairs a torn blob. Strengthen I8 from `hasBlob(ref)` to a full round-trip verification of every referenced blob. Add a cross-store sweep assertion after every crash point: every ref named in the journal or in any checkpoint resolves AND re-hashes, and every durable checkpoint is forkable and resumable.
 
-#### [MODERATE] /home/user/kyxo-runtime/prototypes/kernel-semantics/src/kernel.ts:379-384 (admission) and :634-654 (settle)
+#### [MODERATE] prototypes/kernel-semantics/src/kernel.ts:379-384 (admission) and :634-654 (settle)
 
 **Attack.** Budget enforcement is hardcoded to the single unit string `'invocations'`. Admission checks `this.remaining(g, 'invocations') < 1` and nothing else; `settle()` accepts arbitrary unit names straight from the capability's `usage` proposals and moves them into `settled` with no limit check anywhere.
 
