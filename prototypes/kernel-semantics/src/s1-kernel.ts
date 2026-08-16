@@ -74,6 +74,43 @@ export function verifyS1Record(record: unknown): boolean {
   });
 }
 
+/**
+ * Copy an untrusted value into kernel-owned plain data, ONCE, at the boundary.
+ *
+ * THE ROOT CAUSE OF MOST OF THIS WAVE'S SECURITY DEFECTS (docs/20 F-36). Six separate
+ * findings were the same mistake wearing different clothes: the kernel read a field it did
+ * not own more than once, or kept a reference to it.
+ *
+ *   - `proposal.landed` read twice: a getter answering false-then-true walked between the
+ *     guard and the recorder.
+ *   - `evidence.verdict` read twice: an invocation completed while the only evidence record
+ *     in the journal said `fail` — review #2's FATAL through a new door.
+ *   - `request` retained by reference: a capability mutating `ctx.request` made live state
+ *     disagree with the journal, falsifying S1-I3 with no journal access at all.
+ *   - `manifest.units` / `traits.effectClass` re-read per invocation from a live provider
+ *     object, so "fixed before the invocation" was not.
+ *
+ * Patching instances produces new instances. A value that crosses into the kernel is
+ * snapshotted here and never re-read from the caller's object again.
+ */
+function snapshot<T>(value: T): T {
+  if (value === null || typeof value !== 'object') {
+    canonical(value);                       // reject what the format cannot represent
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(snapshot) as unknown as T;
+  const proto = Object.getPrototypeOf(value) as object | null;
+  if (proto !== Object.prototype && proto !== null) {
+    canonical(value);                       // throws with the explanatory message
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as object)) {
+    const v = (value as Record<string, unknown>)[key];   // read ONCE
+    if (v !== undefined) out[key] = snapshot(v);
+  }
+  return Object.freeze(out) as unknown as T;
+}
+
 /** The units this capability declares as provider-metered, in a stable order. */
 function meteredOf(policy: Readonly<Record<string, UnitPolicy>> | undefined): string[] {
   return Object.entries(policy ?? {}).filter(([, p]) => p.metered).map(([u]) => u).sort();
@@ -326,7 +363,7 @@ export class S1Kernel {
   async invoke(
     execId: ExecutionId,
     capabilityId: string,
-    request: unknown,
+    rawRequest: unknown,
     grant: GrantHandle,
     opts: S1InvokeOptions = {},
     depth = 0,
@@ -337,6 +374,9 @@ export class S1Kernel {
     if (provider === undefined) throw new S1Error(`unknown capability ${capabilityId}`);
     this.authorize(fam, grant);
 
+    // Snapshot before ANY use: the effect key, the journal record and the capability must
+    // all see the same bytes, and none of them may see a later mutation (F-36).
+    const request = snapshot(rawRequest);
     const effectClass = opts.effectClassOverride ?? provider.manifest.traits.effectClass;
     // Effect identity is RUNTIME-DERIVED from the invocation inputs. A capability cannot
     // choose or vary it (PART 2); the caller's request and step are the only inputs.
@@ -531,7 +571,9 @@ export class S1Kernel {
       const gen = provider.invoke(ctx);
       let next = await gen.next();
       while (!next.done) {
-        const proposal = next.value;
+        // One read of the capability's object, into kernel-owned data. Every guard and
+        // every record below then sees the same values (F-36).
+        const proposal = snapshot(next.value);
         if (proposal.type === 'external' && proposal.landed) {
           // A landing reported by a capability whose DECLARED CLASS is not external is a
           // misdeclaration. The first fix for that (F-19) refused the landing and recorded
@@ -609,7 +651,28 @@ export class S1Kernel {
         { status: 'failed', error: String(err) });
     }
 
-    return this.settle(familyId, execId, invocationId, grant.id, effectKey, effectClass, reservation, result);
+    try {
+      return this.settle(familyId, execId, invocationId, grant.id, effectKey, effectClass, reservation, result);
+    } catch (err) {
+      if (err instanceof CrashError || err instanceof CommitFailedError) throw err;
+      // Settlement itself failed — a payload the format cannot represent, most likely.
+      // This used to escape uncaught from OUTSIDE the try/catch, so the invocation never
+      // became terminal: its claim stayed held and its reservation was never released,
+      // permanently and family-wide, with every invariant green because S1-I6 only
+      // inspects terminal invocations (docs/20 F-37, found by adversarial review).
+      //
+      // The lease must end even when the preferred ending cannot be written.
+      this.commit(familyId, execId, [
+        { kind: 'invocation.failed', invocationId, grantId: grant.id,
+          payload: { effectKey, effectClass, landedExternal: hasLanded(this.family(familyId), effectKey),
+            error: `settlement failed: ${String(err)}` } },
+        { kind: 'effect.settled', invocationId, grantId: grant.id,
+          payload: { effectKey, state: hasLanded(this.family(familyId), effectKey) ? 'settled' : 'released' } },
+        { kind: 'grant.settled', invocationId, grantId: grant.id,
+          payload: { units: { invocations: 1 }, releasing: reservation } },
+      ]);
+      throw err;
+    }
   }
 
   private async delegate(
@@ -802,7 +865,12 @@ export class S1Kernel {
       // The outcome is KNOWN and nothing reached the world, for any class: free the key.
       // (An unknown outcome does not reach here — it commits `invocation.uncertain`
       // instead, which leaves the claim held. See I15.)
-      finalDrafts.push({ kind: 'effect.released', invocationId, grantId, payload: { effectKey } });
+      finalDrafts.push({
+        kind: 'effect.released', invocationId, grantId,
+        // Name the claim being released. Addressing by effect key alone let one
+        // invocation revoke another's lease (F-33).
+        payload: { effectKey, claimId: fam.claims.get(effectKey)?.claimId ?? null },
+      });
     }
     finalDrafts.push({ kind: 'grant.settled', invocationId, grantId, payload: { units: cappedUsage, releasing: reservation } });
 
@@ -863,10 +931,27 @@ export class S1Kernel {
       case 'abandon-failed': resolved = 'failed'; detail['authority'] = d.authority; break;
     }
 
-    this.commit(familyId, execId, [{
-      kind: 'invocation.uncertainty.resolved', invocationId, grantId: inv.grantId,
-      payload: { ...detail, resolved, effectKey: inv.effectKey, effectClass: inv.effectClass, landed: landedNow },
-    }]);
+    // Resolving an uncertainty ENDS the invocation, so it must end the lease too. It used
+    // to commit one event and touch the ledger not at all, so every resolved uncertainty
+    // leaked its reservation permanently: three crash-and-adopt cycles exhausted a
+    // three-invocation grant while nothing was running, and the adopted charges settled as
+    // having spent nothing (docs/20 F-35, found by adversarial review). S1-I6 caught it —
+    // no test had ever called the invariants on this path.
+    this.commit(familyId, execId, [
+      {
+        kind: 'invocation.uncertainty.resolved', invocationId, grantId: inv.grantId,
+        payload: { ...detail, resolved, effectKey: inv.effectKey, effectClass: inv.effectClass, landed: landedNow },
+      },
+      {
+        kind: 'grant.settled', invocationId, grantId: inv.grantId,
+        // An adopted landing really consumed its reservation; an abandoned or compensated
+        // one is charged the invocation only, which is what bounds retry loops.
+        payload: {
+          units: landedNow || resolved === 'completed' ? inv.reservation : { invocations: 1 },
+          releasing: inv.reservation,
+        },
+      },
+    ]);
     return resolved;
   }
 

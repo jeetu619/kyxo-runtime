@@ -269,6 +269,13 @@ it is named here rather than corrected in place, because a freeze decision edite
 fact stops being evidence. It understates the prior baseline, so the improvement this wave
 made is slightly larger than doc 22's summary implies, not smaller.)
 
+> **SUPERSEDED BY §11.** The reassessment above was written before the independent
+> adversarial review had run. Six reviewers subsequently found defects that all 177 tests
+> in this wave had missed, several of them FATAL and several in the very blockers this
+> section marks RESOLVED. §11 is the current status; this section is left as written
+> because a self-assessment edited after independent review stops being evidence of what
+> self-assessment is worth.
+
 ### Decision: **STILL NOT READY TO FREEZE**
 
 Not because the remaining items are large, but because two of them are exactly the kind
@@ -382,3 +389,131 @@ The previous review's value was that it was independent and hostile, and it foun
 things. This wave's four model-versus-kernel disagreements are a small-scale replication of
 the same lesson: the defects that matter are the ones the author cannot see. Two of the
 four were kernel bugs that every hand-written test in this wave had missed.
+
+
+---
+
+## 11. Independent adversarial review (criterion 14) — and what it overturned
+
+Six reviewers — durable execution, security, event sourcing, distributed systems,
+architecture invariants, SDK maintainer — were given the format, the tests and this
+document, and wrote their own attack scripts. They were asked to break it, not to grade it.
+
+**They broke it.** Roughly seventy findings, of which fourteen were FATAL with working
+reproductions. Every FATAL was in a path this wave's 177 tests reach, and none of those
+tests had caught any of them.
+
+### 11.1 The result that matters most
+
+Three of the blockers §5 marks **RESOLVED** were falsified:
+
+| Blocker | §5 said | Independent review found |
+|---|---|---|
+| B1 | RESOLVED | A double charge with **one kernel, one process, zero concurrency** — a storage error that keeps the bytes but loses the ack left memory saying "not landed" while the journal said landed, so settlement freed the claim and the retry charged again (F-27). |
+| B5 | RESOLVED | `resume()` performed **no** authority check, no policy, no budget check. A revoked grant and a deny-class kill switch were both ignored while the invocation reported `completed` (F-29). "One shared settlement path" was true; the admission half was not shared at all. |
+| B6 | RESOLVED | `assertS1Invariants` had **zero call sites in `src/`**. The entire `payloadHash` apparatus was inert outside the test suite, and the record checksum links a record to itself and nothing before it — so payloads could be rewritten in place, and whole records **deleted or reordered** mid-journal, and recovery accepted all of it silently, losing a landing and charging again (F-31, F-32). |
+
+The B6 finding is the sharpest lesson in the wave. The chain carried the evidence. The
+verification code existed and was correct. **Nothing on the production path called it.**
+"Implemented and tested" and "in force" turned out to be different claims, and this
+document asserted the first while meaning the second.
+
+### 11.2 What was fixed
+
+Seventeen defects, F-21 to F-37, are fixed and pinned by tests (181 now pass). The
+significant ones beyond the three above: the universality gate read two named files and
+never scanned the S1 kernel at all, so the CI step named after the project's founding
+invariant passed on four injected identity branches (F-21); this wave's own F-19 fix
+**destroyed world truth** and was worse than the bug it fixed (F-22); budgets failed open
+for units a capability did not declare, moving $25,000 against a $5 limit while reporting
+the budget untouched (F-23); the kernel minted a per-attempt nonce into every delegated
+effect key (F-24); `canonical()` hashed `Date`, `Map` and `Set` to `{}` so two different
+requests shared one effect key (F-25); `estimate: {usd: NaN}` was type-correct and
+permanently disabled budget enforcement family-wide (F-28); and `effect.released` addressed
+claims by effect key rather than by the claim it owned, so one invocation revoked another's
+lease (F-33).
+
+The security reviewer's meta-finding is the one to carry forward: **almost every one of
+these is the same mistake** — the kernel read a value it did not own more than once, or
+kept a reference to it. Patching instances produced new instances twice during the review
+itself. The fix is structural (F-36): a value crossing into the kernel is snapshotted into
+kernel-owned plain data at the boundary and never re-read from the caller's object.
+
+### 11.3 What is NOT fixed, and why that decides the freeze
+
+These are known, reproduced, and open:
+
+- **No writer identity or fence in the record format.** Two writers over one journal produce
+  **byte-identical** commit records — same commit token, event ids, seq and `occurredAt` —
+  so the violation is indistinguishable from an at-least-once redelivery. Saying multi-writer
+  safety is "not claimed" is defensible; shipping a format in which the violation is
+  *unattributable* is not, and the field cannot be added after a freeze.
+- **Forward tolerance defeats protection.** A valid, correctly-signed journal from a future
+  revision that renames `effect.*` is read by today's fold as a series of no-ops: the landing
+  vanishes and the card is charged again, with every invariant green. This document argued
+  B7 was "additive … not a freeze blocker on their own." That judgement is **wrong**, and it
+  is the one conclusion here the evidence directly overturns — a must-understand bit added in
+  a later revision tells a reader nothing about a record already written.
+- **The journal is unauthenticated.** `sha` is unkeyed with no anchor or signature, so an
+  attacker with disk access re-chains the whole journal and every check passes. §2.5's table
+  describes per-event detection and reads as a general guarantee.
+- **`family()` returns live mutable state**, and `rehydrateGrant` mints a handle for any
+  grant id in the family — ids that are printed in the clear on every event — including
+  revoked ones. Attenuation is bypassable in-process.
+- **Ergonomics that produce double charges from ordinary code**: a nonce or timestamp in the
+  request, a re-run job calling `createExecution()`, or a forgotten `step` (which defaults to
+  `'anon'`). The SDK reviewer's summary is fair: the money-safety story is defeated by the
+  four most ordinary things a developer does.
+- **`expiresAt` is enforced in units of journal entries.** §5 files B9 as "out of scope";
+  it is not merely absent, it is an enforced deadline with a meaningless unit.
+- **Coverage is narrower than its labels.** The differential model never calls `suspend()`,
+  `markUncertain()`, resume, cancel, fork or crash — every FATAL lives in exactly those
+  paths. "Invariants asserted after every step of every generated sequence" is literally true
+  and covers none of the surface that broke.
+
+### 11.4 Revised status
+
+| Criterion | §6 said | Now |
+|---|---|---|
+| 2 — no unresolved FATAL | PARTIAL | **FAILED** |
+| 5 — crash matrix | PASS | **PARTIAL** — the sweep assumed "threw ⇒ nothing written", excluding the dominant real storage fault |
+| 12 — serialization evolution | PARTIAL | **FAILED** — not additive; it is a live double-charge path |
+| 14 — adversarial re-review | NOT RUN | **FAILED** |
+
+| Blocker | §5 said | Now |
+|---|---|---|
+| B1 | RESOLVED | **PARTIAL** — fixed for the lost-ack case; no fencing field in the format |
+| B4 | RESOLVED | **PARTIAL** — the fold is deterministic over an ordering the format does not define |
+| B5 | RESOLVED | **RESOLVED** — resume now runs the same gates |
+| B6 | RESOLVED | **PARTIAL** — verification is on the read path now; the journal is still unauthenticated |
+| B7 | PARTIAL | **UNCHANGED** — and reclassified as a freeze blocker |
+| B9a | RESOLVED | **PARTIAL** — protection is defeated by cross-family redelivery |
+| B9 | UNCHANGED | **UNCHANGED**, and an active defect rather than an absence |
+
+**Five resolved, five partial, one unchanged.**
+
+### 11.5 Decision
+
+**DO NOT FREEZE, and do not build on this format yet.** Not for the reasons §6 gave — those
+were the wrong two items. The blocking set is: no writer identity in the format, no
+must-understand reader policy, an unauthenticated journal, and an effect-identity model that
+double-charges under ordinary developer behaviour. Each is a *format* change, which is
+exactly the class of thing a freeze forecloses.
+
+The recommendation in §10 was right and remains right, with one correction: it is not enough
+to run an independent review once. Run it **against a tagged commit with a green suite**, and
+re-run it after the fixes above, because two reviewers observed the tree changing underneath
+them while they read it.
+
+### 11.6 What this says about the method
+
+§10 said "the defects that matter are the ones the author cannot see," offered as an argument
+for independent review. It was a stronger claim than intended: seventeen of the defects fixed
+in this wave were found by someone other than the author, in one round, against a suite the
+author had built specifically to find them and which was green.
+
+The corollary is uncomfortable and worth stating plainly. This document's §5 and §6 were
+written in good faith and were wrong about three RESOLVED blockers and two criteria. A
+results document written by the implementer is evidence about the implementation, not about
+its safety, and it should be read as the former until something adversarial has been pointed
+at it.

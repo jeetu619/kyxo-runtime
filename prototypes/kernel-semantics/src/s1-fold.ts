@@ -122,6 +122,19 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
       // `uncertain` after a landing, and asking the claim would then free a key the world
       // has already seen.
       if (c === undefined) break;
+      // A RELEASE FREES ONLY THE CLAIM IT OWNS.
+      //
+      // This used to address the claim by effect key alone, so one invocation's release
+      // deleted whatever claim happened to occupy the slot — including a lease another
+      // invocation was actively holding. Two invocations on one key, and the first to
+      // finish revoked the second's lease; the second then landed with no claim at all,
+      // and a third invocation found the slot empty and charged again
+      // (docs/20 F-33/F-34, found by adversarial review).
+      const owner = (p['claimId'] as string | undefined) ?? undefined;
+      const holder = ev.invocationId;
+      if (owner !== undefined && c.claimId !== owner) break;
+      if (owner === undefined && holder !== undefined && c.holder !== holder) break;
+
       if (hasLanded(fam, key)) fam.claims.set(key, { ...c, state: 'settled' });
       else fam.claims.delete(key);
       break;
