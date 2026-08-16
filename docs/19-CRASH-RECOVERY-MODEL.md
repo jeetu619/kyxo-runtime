@@ -1,6 +1,26 @@
 # 19 — Crash Recovery Model
 
-Status: **EXECUTABLE**, 2026-08-16. Every row of the crash matrix below is exercised by
+Status: **EXECUTABLE**, 2026-08-16.
+
+> **EXTENDED by Wave S1 (2026-08-16).** The matrix below covers the phase-2 kernel and still
+> passes. The `2026-08-17` format has its own matrix in
+> `prototypes/kernel-semantics/tests/s1-crash.test.ts`: **18 named positions** plus an
+> exhaustive sweep (a crash before every durable write of a rich workload, clean and torn,
+> with the full S1 invariant set asserted after each restart).
+>
+> Two recovery semantics changed and this document does not yet describe them:
+>
+> - **Recovery fails closed on non-trailing corruption** (B6, ADR-027). A trailing bad record
+>   is an interrupted write and is discarded; a bad record with valid records after it is
+>   corruption, and folding past it deletes history from the middle of the log. Quarantine is
+>   an explicit operator override, never a default.
+> - **A landing is durable from the moment it is yielded** (B3, ADR-028), so a crash between
+>   the yield and the outcome leaves the OUTCOME unknown while the LANDING is known — a
+>   distinction the phase-2 model could not represent.
+>
+> Crash positions are now named by event kind rather than by counting durable writes.
+> Counting is brittle: a stale count silently tests the wrong moment, or never fires and
+> passes for the wrong reason. Both happened while this suite was being written. Every row of the crash matrix below is exercised by
 `prototypes/kernel-semantics/tests/crash.test.ts`, either by the systematic sweep (a
 crash injected before every durable write in a representative workload, in both clean
 and torn-write variants) or by a named scenario test.

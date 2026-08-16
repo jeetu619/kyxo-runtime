@@ -2,6 +2,32 @@
 
 Status: **NORMATIVE DRAFT v0**, 2026-08-16. Protocol revision `2026-08-16`.
 
+> **SUPERSEDED IN PART by Wave S1 (2026-08-16). Record format revision `2026-08-17`.**
+>
+> This document describes the phase-2 record format. Wave S1 replaced that format to resolve
+> freeze blockers B1, B2, B3, B4, B5, B6, B8, B9a and B9b. Where this document and the S1
+> kernel disagree, **the S1 kernel governs** under the precedence rule (doc 24 §2), and the
+> disagreement is one of these:
+>
+> | Area | This document says | The `2026-08-17` format does | Record |
+> |---|---|---|---|
+> | Effect claims | key indexed at settlement | claimed at admission, before dispatch | ADR-024 |
+> | Grants | per-execution state copied at fork | one family-scoped ledger per grant id | ADR-025 |
+> | Protected effects | list captured at a checkpoint cut | family-wide ledger derived by fold | ADR-025 |
+> | Budget units | `invocations` enforced, others advisory | every unit reserved; metered vs unmetered settlement | ADR-026 |
+> | Landed effects | candidate held until settlement | committed at yield | ADR-028 |
+> | Resume | `resumeInvocation`, a second settlement path | one shared path; lease read from the journal | ADR-028 |
+> | Integrity | chain covers the payload | chain covers `payloadHash`; whole-record checksum | ADR-027 |
+> | Recovery | skips bad records and continues | fails closed on non-trailing corruption | ADR-027 |
+>
+> §2's redaction specification is now **true** — it was the thing the format could not do,
+> and B8's redaction half is resolved. `leaseEpoch` remains declared here and implemented
+> nowhere; it must be implemented or normatively withdrawn before freeze.
+>
+> Results, blocker reclassification and the freeze reassessment: `25-S1-RECORD-FORMAT-RESULTS.md`.
+> This document is **not** rewritten to match, because rewriting a normative record to agree
+> with a later decision destroys the evidence that the decision was made.
+
 This document specifies the semantics of the Kyxo kernel's durable core: events, the
 journal, the commit barrier, invocations, side effects, checkpoints, resume, fork,
 deduplication and lineage. It is *executable*: every normative statement here is
