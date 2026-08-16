@@ -3,7 +3,12 @@
 Date: 2026-08-16. Decision authority: this phase's mandate ("do not freeze merely because
 tests pass once").
 
-> **Reassessed by Wave S1 (2026-08-16).** Eight of the eleven blocker clusters below are now
+> **Reassessed twice by Wave S1 (2026-08-16).** An independent adversarial review then
+> falsified three of the clusters the wave had marked RESOLVED; current status is
+> `25-S1-RECORD-FORMAT-RESULTS.md` **§11**, not §5. The decision below stands and its
+> grounds are now stronger, not weaker. Superseded first pass follows.
+>
+> Eight of the eleven blocker clusters below were
 > RESOLVED, two are PARTIAL and one is UNCHANGED; the freeze criteria score moved from 10 of 14
 > failing-partial-or-unrun to 6 of 14. (The "7 of 14" in §1 below is a miscount of §1's own
 > table, which tallies 4 PASS + 6 PARTIAL + 4 FAILED; left uncorrected, see doc 25 §6.) **The decision below still stands: NOT READY TO FREEZE** —
