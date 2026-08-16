@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import { Kernel } from '../src/kernel.ts';
 import { Storage } from '../src/storage.ts';
@@ -62,23 +62,60 @@ test('eight heterogeneous constructs traverse one invocation path', async () => 
   assertInvariants({ kernel: k, storage }, 'eight constructs');
 });
 
-test('the kernel source never branches on capability identity', () => {
-  const kernelSrc = readFileSync(new URL('../src/kernel.ts', import.meta.url), 'utf8');
-  const typesSrc = readFileSync(new URL('../src/types.ts', import.meta.url), 'utf8');
+test('NO kernel source branches on capability identity', () => {
+  // THIS GATE MUST GLOB, NEVER NAME FILES.
+  //
+  // It previously read exactly `src/kernel.ts` and `src/types.ts`. Wave S1 added a second
+  // kernel — `s1-kernel.ts`, `s1-fold.ts`, `s1-types.ts`, `s1-invariants.ts` — and the gate
+  // silently kept passing on the two files it had been told about. An independent reviewer
+  // injected four textbook violations into `s1-kernel.ts` (a literal capability-id branch,
+  // `kind === 'agent'`, a `capabilityType` identifier, a provider-name prefix branch) and
+  // all 175 tests passed, including the CI step named after this very invariant.
+  //
+  // Enumerating files is how a guard rots: the next kernel is added by someone who does
+  // not know this list exists. Globbing means new source is covered by default and opting
+  // OUT is the deliberate act.
+  const dir = new URL('../src/', import.meta.url);
+  const sources = readdirSync(dir)
+    .filter((f) => f.endsWith('.ts'))
+    // Capability fixtures legitimately name themselves; they are userland, not kernel.
+    .filter((f) => f !== 'capabilities.ts');
 
-  // No capability id may appear as a literal in kernel or record-format code.
-  const capabilityIds = ALL_CAPABILITIES.map((c) => c.manifest.id);
-  for (const id of [...capabilityIds, 'payment.charge']) {
-    assert.ok(!kernelSrc.includes(`'${id}'`), `kernel.ts must not name capability ${id}`);
-    assert.ok(!typesSrc.includes(`'${id}'`), `types.ts must not name capability ${id}`);
+  assert.ok(sources.length >= 6, `expected the whole kernel surface, saw ${String(sources.length)} files`);
+  // Both kernels must be in scope. If a rename drops one, this fails rather than passing quietly.
+  for (const required of ['kernel.ts', 'types.ts', 's1-kernel.ts', 's1-fold.ts', 's1-types.ts']) {
+    assert.ok(sources.includes(required), `the identity gate must cover ${required}`);
   }
 
+  const capabilityIds = [...ALL_CAPABILITIES.map((c) => c.manifest.id), 'payment.charge'];
   // No conceptual-type branching. (Effect classes and declared traits are permitted:
   // they are negotiated properties, not identities.)
-  const forbidden = [/\bkind\s*===\s*['"](agent|tool|model|harness|human|remote)/i,
-                     /capabilityType/i, /instanceof\s+\w*(Agent|Tool|Model)\b/];
-  for (const re of forbidden) {
-    assert.ok(!re.test(kernelSrc), `kernel.ts contains forbidden type branching: ${re}`);
+  const forbidden = [
+    // Comparing ANYTHING to a conceptual-type name. Deliberately not anchored to a
+    // `kind` identifier: the first draft of this rule was `/\bkind\s*===\s*.../` and
+    // `capKind === 'agent'` walked straight through it, because \b does not match inside
+    // a camelCase word. What is forbidden is the question, not the variable holding it.
+    /===\s*['"](agent|tool|model|harness|human|remote)['"]/i,
+    /capabilityType/i,
+    /instanceof\s+\w*(Agent|Tool|Model)\b/,
+    // Branching on who the provider is, by name prefix, is provider identity by another route.
+    /capabilityId\s*\.\s*(startsWith|endsWith|includes|match)\s*\(/,
+    /\bprovider(Id|Name)\s*===/i,
+  ];
+
+  for (const file of sources) {
+    const src = readFileSync(new URL(file, dir), 'utf8');
+    // Strip comments: prose may legitimately discuss `kind === 'agent'` to explain the rule.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+
+    for (const id of capabilityIds) {
+      assert.ok(!code.includes(`'${id}'`), `${file} must not name capability ${id}`);
+    }
+    for (const re of forbidden) {
+      assert.ok(!re.test(code), `${file} contains forbidden identity branching: ${String(re)}`);
+    }
   }
 });
 

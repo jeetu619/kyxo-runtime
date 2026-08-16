@@ -264,3 +264,130 @@ resume".
 
 **Final tally for this phase: 10 findings, all fixed** (F-1…F-10). The remaining
 **52 review findings are catalogued, not fixed** — see doc 22.
+
+---
+
+## 7. Findings from Wave S1 — record-format completion (2026-08-16)
+
+Nine further falsifications, F-11 to F-19, produced while implementing and attacking the
+`2026-08-17` record format. Full context: doc 25. Two of these (F-12, F-13) falsified a
+decision made earlier **inside the same wave**, and two (F-18, F-19) were found by an
+independent reference model rather than by any hand-written test.
+
+### F-11 — The disk decided the record format's integrity recipe
+**Found by:** reading `Storage.readJournal()` while writing the first S1 race test.
+**What happened.** `readJournal()` hard-coded `checksum === sha(record.events)`, the
+phase-2 recipe. The S1 format checksums the whole record, so **every S1 record verified as
+torn**, and recovery silently saw an empty journal — a catastrophic failure that produced
+no error at all. No test had run against S1 recovery yet, so nothing was red.
+**Fix.** Which bytes a checksum covers is a record-format decision, not a disk decision.
+The verifier is now supplied by the caller; storage keeps bytes.
+**Now enforced by:** `s1-integrity` I7, which asserts the two formats are not confusable in
+either direction.
+
+### F-12 — Protection was scoped to the ancestor path, not the lineage tree
+**Found by:** `s1-lineage` L1/L2, written against the real-world requirement rather than
+against the implementation.
+**What happened.** The first S1 implementation bound an execution only by effects landed by
+itself and its ancestors, on the theory that siblings are divergent world-lines. The
+record-format header called this asymmetry "the load-bearing decision of this wave". It is
+wrong: **the external world is not forked.** A lineage tree is bookkeeping; a charged card
+is a fact. B9a's ratified resolution had already specified lineage-tree scope "regardless
+of which cut a child came from", and the implementation had narrowed it.
+The narrowing also left two mechanisms answering one question differently — `protectionFor`
+said a fork taken from before a charge was unbound, while the family-wide claim table
+refused it anyway. The safer mechanism was winning by luck.
+**Fix.** Protection is family-scoped. The ancestry walk and its visibility horizon are
+deleted: one scope, one rule, fewer mechanisms. `protectionFor` no longer accepts an
+execution id, because a signature that accepted one would imply the answer could depend
+on it.
+**Now enforced by:** `s1-lineage` (8 tests) and `s1-fork` F5/F6, which assert a cut taken
+before a landing and one taken after give the same answer by the same mechanism.
+
+### F-13 — An operator could assert away a durable landing
+**Found by:** `s1-lineage` L3, written to remove the luck F-12 exposed.
+**What happened.** Resolving an uncertain invocation `abandon-failed` deleted the claim even
+when a durable `effect.landed` record existed. A fork then charged the card a second time —
+reported by the test runner as "Missing expected rejection", i.e. an invocation that should
+have been refused was admitted.
+An operator may resolve an unknown **outcome** to failed. No operator can un-charge a card
+the journal says was charged; the disagreement is about the outcome, and the record is
+about the world.
+**Fix.** The kernel refuses the disposition when a landing is recorded, and the fold
+independently refuses to free a landed key — the fold is the authority and must hold
+against a buggy or hostile writer.
+**Now enforced by:** `s1-lineage` L3 and L3b, the latter synthesising exactly the forged
+record the kernel now refuses to emit, plus `s1-security` A11.
+
+### F-14 — The protection query ignored effect class
+**Found by:** `s1-lineage` L5.
+**What happened.** `protectionFor` reported any landed effect as protected, including
+`external-idempotent`. Behaviour was accidentally correct because the caller re-checked
+exclusivity, but the query itself was misleading — and the reference model and the
+invariant checker would both have inherited the lie.
+**Fix.** Only classes that cannot be safely repeated are protected.
+
+### F-15 — Budget enforcement was opt-in
+**Found by:** `s1-grants` G4b.
+**What happened.** Reservations were built from the caller's `estimate` alone, so any unit
+the caller declined to estimate was never reserved and therefore never settled. Token
+budgets could be bypassed by not mentioning tokens — B9b in a new costume.
+**Fix.** A capability's manifest declares the units it consumes with a per-invocation floor.
+The reservation is the per-unit maximum of that floor and the caller's estimate; neither
+side can shrink it.
+
+### F-16 — Settlement rested on capability honesty
+**Found by:** `s1-grants` G4c, reasoning from the pure-proposer principle.
+**What happened.** Settlement charged capability-declared usage, so a capability declaring
+zero could run forever against a finite budget. A safety property depended on untrusted
+code, contradicting the stance the whole architecture rests on.
+**Fix.** Units are declared `metered` or not. A metered unit is one where the provider
+reports authoritative consumption, so a declaration below the reservation is believed and
+the over-estimate refunded. An unmetered unit is charged its full reservation whatever the
+capability claims.
+**Residual limit, stated:** a metered unit is trusted downward. See doc 25 §7.
+
+### F-17 — Redaction is not a single-event operation
+**Found by:** `s1-integrity` I2 failing on its first run.
+**What happened.** Redacting the event carrying a secret left the secret in the journal,
+because `invocation.admitted` also carries the request — added in this wave so a suspended
+invocation could be re-entered from a cold start. Erasure must find every event carrying
+the datum.
+**Fix.** None to the format; the finding is recorded and the cost pinned. The test asserts
+the exact number of events carrying the datum, so a revision that adds another copy fails
+and someone has to look at it. Carrying sensitive payloads by artifact reference is the
+structural answer and was out of scope for this wave.
+
+### F-18 — Usage evidence from a failed invocation was discarded
+**Found by:** the independent reference model, seed 1 step 5.
+**What happened.** Proposals were only read when the result was `ok`, so a capability that
+consumed 5,000 tokens and then failed was charged nothing. A retry loop could spend without
+limit for the price of one invocation unit per attempt.
+**Fix.** `usage` and `evidence` are **observations** about what happened, not **outputs** of
+a successful run, and are now read whatever the outcome. State and artifact writes are
+outputs and are still discarded on failure.
+
+### F-19 — A capability could claim it touched the world without the class to do so
+**Found by:** the independent reference model, seed 3 step 25.
+**What happened.** A capability declaring class `local` yielded
+`{type: 'external', landed: true}`. The kernel recorded a landing, but protection keys off
+the declared class and `local` is not exclusive, so the landing bound nothing and the same
+external effect could be repeated freely.
+**Fix.** The class is a negotiated manifest property fixed before the invocation; the
+proposal is per-yield and untrusted. Where they disagree the manifest wins, and the
+disagreement is journaled as `external-landing-from-non-external-class`.
+**Now enforced by:** `s1-effects` E12.
+
+### What this round says about method
+
+F-12 is the uncomfortable one: the wave's own stated "load-bearing decision" was falsified
+by tests written a few hours later, and the ratified resolution it departed from had been
+correct all along. The narrowing survived because it was written down confidently in a file
+header — which is exactly the mechanism by which architecture documents become wrong and
+stay wrong.
+
+F-18 and F-19 are the instructive pair. Both were reachable, both were security-relevant,
+and neither was found by any of the 129 hand-written tests in this wave. They were found by
+an independent model that shares no code with the implementation, because it was written
+from the specification rather than from the code and could therefore disagree with it. A
+model derived from the fold would have agreed by construction and proved nothing.

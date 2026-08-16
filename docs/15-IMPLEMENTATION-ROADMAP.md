@@ -622,6 +622,17 @@ review retracted.
 
 ## 5. The exact next engineering step
 
+> **Superseded by Wave S1 (2026-08-16).** The step below assumed the record format was
+> close to stable. It was not: doc 22 found 52 freeze-blocking findings, and Wave S1
+> replaced the format (revision `2026-08-17`) to resolve eight of the eleven clusters.
+>
+> **The actual next step is an independent adversarial review of the new format** — doc 25
+> §10. Generating a JSON Schema and ten conformance fixtures from a format that has not
+> survived independent attack would bake this wave's blind spots into a published artifact,
+> which is the specific mistake doc 22 exists to prevent. The schema work below remains the
+> right step *after* that review, and `prototypes/kernel-semantics/` remains its source of
+> truth.
+
 Create the `kyxo-protocol` package and land the v0 JSON Schema for the Event envelope
 (spine §3.4: type + version, correlation/causation/actor IDs, two-tier Artifact-reference
 payload) **generated from the record shapes the semantic kernel already emits** — the envelope,

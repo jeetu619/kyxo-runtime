@@ -31,6 +31,9 @@ jobs:
       - name: Semantic test suite (crash, fork, dedup, grants, property, coverage)
         working-directory: prototypes
         run: node --experimental-strip-types --test kernel-semantics/tests/*.test.ts
+      - name: Wave S1 record format — deterministic races, crash matrix, differential
+        working-directory: prototypes
+        run: node --experimental-strip-types --test kernel-semantics/tests/s1-*.test.ts
       - name: Phase-1 prototype gates
         working-directory: prototypes
         run: bash kernel/validate.sh
@@ -46,6 +49,12 @@ jobs:
           node-version: '22'
       - working-directory: prototypes
         run: npm install --no-audit --no-fund
+      - name: Extended S1 differential (more seeds, longer sequences)
+        working-directory: prototypes
+        env:
+          KYXO_S1_SEEDS: '200'
+          KYXO_S1_LENGTH: '80'
+        run: node --experimental-strip-types --test kernel-semantics/tests/s1-property.test.ts
       - name: Long seeded fuzz
         working-directory: prototypes
         env:

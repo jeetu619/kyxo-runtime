@@ -63,9 +63,9 @@ prototypes/
 | Architectural thesis | **RATIFIED ENOUGH TO PROCEED** — BUILD WITH CHANGES (`docs/01`, ADR-021) |
 | Consumer boundaries | **RATIFIED** (`docs/23`, ADR-022, ADR-023) |
 | Executable semantic direction | **VALIDATED WITH KNOWN BLOCKERS** (`docs/17`–`20`) |
-| Record format | **NOT READY TO FREEZE** — 52 blocking findings (`docs/22`) |
+| Record format | **NOT READY TO FREEZE** — revision `2026-08-17`; after independent adversarial review, 5 of 11 blocker clusters resolved, 5 partial, 1 unchanged (`docs/25` §11) |
 | Production runtime | **NOT STARTED** |
-| Next engineering phase | **Wave S1** — record-format completion (`docs/22` §4) |
+| Next engineering phase | **Format changes the review showed are needed**: writer identity, must-understand reader policy, journal authentication, effect-identity ergonomics (`docs/25` §11.3) |
 
 Merging this to `main` ratifies the architecture, decisions and evidence baseline. It does
 **not** freeze the record format, the kernel ABI, the SDK or any provider API, and it does
@@ -137,6 +137,8 @@ Decisions: `docs/16-ADR/ADR-022-runtime-consumer-boundary.md`,
 
 ## Reading order
 
+1. `docs/25-S1-RECORD-FORMAT-RESULTS.md` — the current record format, what it resolves,
+   what it still does not, and the limits it states rather than hides.
 1. `docs/24-PRE-MERGE-RATIFICATION.md` — what is decided, what is not, and which artifact
    wins when two disagree
 2. `docs/01-EXECUTIVE-THESIS.md` — the recommendation, the strongest objections, and the

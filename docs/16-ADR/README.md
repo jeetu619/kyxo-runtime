@@ -8,7 +8,7 @@
 > in a separate workstream; until that lands, a body may still describe a superseded mechanism,
 > and in that case the amendment log and the phase-2 ADRs (017–021) govern.
 
-This directory holds the twenty-three ADRs of the Kyxo research program. Every ADR is written from
+This directory holds the twenty-eight ADRs of the Kyxo research program. Every ADR is written from
 `research/DESIGN-SPINE.md` (the binding design contract) under the claim-labeling discipline of
 `research/METHODOLOGY.md`. ADRs 001–016 share one format: Title / Status / Context (forces, with
 labeled evidence citations into `research/notes/`) / Decision (imperative) / Alternatives
@@ -24,6 +24,11 @@ considered / Consequences (positive **and** negative) / Evidence & confidence bl
 - **017–021 — Accepted (2026-08-16, phase 2).** These were forced by the review and by the
   executable kernel: each supersedes or amends a named earlier ADR, and each is backed by tests
   in `prototypes/kernel-semantics/` rather than by argument alone.
+- **022–023 — Accepted (2026-08-16).** Repository and consumer architecture (doc 23).
+- **024–028 — Accepted (2026-08-16, Wave S1).** Forced by the record-format completion wave.
+  Each resolves a named freeze blocker from doc 22 and is backed by the S1 suites. ADR-025 is
+  the one to read first: it records a decision Wave S1 made, falsified with its own tests, and
+  reversed.
 
 ## Index
 
@@ -90,6 +95,20 @@ supersedes or amends a named earlier record.*
 | [ADR-020](ADR-020-authority-is-object-identity.md) | Authority is object identity; grant limits are ceilings, not reservations | Grant handles are kernel-minted objects tracked in a private registry — forgery by known id, prototype or shallow copy all fail — and a grant's limits are ceilings enforced along the whole chain at admission rather than budget partitioned away. Amends ADR-013 and ADR-014; implements A8. |
 | [ADR-021](ADR-021-build-vs-extend-re-argued.md) | BUILD vs EXTEND, re-argued on executable evidence | Answers the mission's PART 13 question on what the executable kernel actually demonstrated, recording which leg of the BUILD case the work weakened and which it strengthened. Supersedes the BUILD reasoning of spine §10 as amended by A6 (which retracted "cannot be retrofitted" as the sole discriminator and moved a non-cooperative enforcement floor into the MVP). |
 
+### Forced by the record format (024–028)
+
+*Accepted 2026-08-16, Wave S1. Each resolves a freeze blocker named in
+`22-RECORD-FORMAT-FREEZE-DECISION.md`; results and reclassification are in
+`25-S1-RECORD-FORMAT-RESULTS.md`. Record format revision `2026-08-17`.*
+
+| ADR | Title | Decision in one line |
+|---|---|---|
+| [ADR-024](ADR-024-effect-claims-at-admission.md) | Effect claims are acquired at admission, inside a synchronous critical section | An exclusive effect key is claimed as a committed record *before* dispatch, and check-then-claim is one region with no suspension point — enforced by a static CI guard against `await` in the region and a runtime re-entrancy guard, not by comment. Resolves B1. Single-writer only; multi-writer exclusivity is explicitly not claimed. |
+| [ADR-025](ADR-025-family-scoped-ledgers.md) | Protected effects and grant budgets are both family-scoped ledgers | An exclusive effect landed anywhere in a lineage tree binds the whole tree, and budget spent anywhere is spent for the whole tree, because **the external world is not forked**. Resolves B2 and B9a, and supersedes the ancestor-path scoping that Wave S1 itself proposed and then falsified (doc 20 F-12). |
+| [ADR-026](ADR-026-metered-units.md) | Budget units declare whether anyone measures them | A manifest declares each unit's per-invocation floor and whether it is `metered`; the reservation is the max of floor and caller estimate, a metered declaration may reduce the charge and an unmetered one may not. Resolves B9b. Amends ADR-020 from rights to accounting. |
+| [ADR-027](ADR-027-chain-covers-payload-hash.md) | The integrity chain covers the payload hash, not the payload | Redaction becomes possible without breaking integrity, and lawful erasure, silent rewriting and consistent forgery become three distinguishable cases; recovery fails closed on non-trailing corruption. Resolves B6 and the redaction half of B8; `leaseEpoch` and taint remain declared-but-absent. |
+| [ADR-028](ADR-028-landings-commit-at-yield.md) | A landed external effect commits at yield, and suspension is a lease that can be resumed | A report that the world changed is not an output and is durable from the instant it is yielded; `resume()` picks up the existing lease from the journal rather than re-admitting, collapsing the second settlement path. Resolves B3 and B5. Amends ADR-017 and ADR-018. |
+
 ## Reading order
 
 - For the kernel thesis: 001 → 004 → 005 → 002 → 009 → 018.
@@ -97,6 +116,7 @@ supersedes or amends a named earlier record.*
 - For authority and safety: 013 → 020 → 014 → 015 → 012 → 017.
 - For state, recovery and subsystems: 002 → 018 → 019 → 008 → 011.
 - For implementation posture and the build decision: 010 → 016 → 021.
+- For the record format as it now stands: 002 → 017 → 024 → 028 → 025 → 026 → 027.
 - Normative companions to the phase-2 records: `17-KERNEL-SEMANTICS.md` (semantics),
   `18-KERNEL-INVARIANTS.md` (invariants and their tests), `19-CRASH-RECOVERY-MODEL.md`,
   `20-SEMANTIC-TEST-RESULTS.md` (the five prose-vs-code corrections).

@@ -1,6 +1,34 @@
 # 18 — Kernel Invariants
 
-Status: **EXECUTABLE**, 2026-08-16. Every invariant below is either checked at runtime by
+Status: **EXECUTABLE**, 2026-08-16.
+
+> **EXTENDED by Wave S1 (2026-08-16).** Invariants I1–I25 below are checked by
+> `prototypes/kernel-semantics/src/invariants.ts` against the phase-2 kernel and remain in
+> force for it. The `2026-08-17` record format adds a second, independent set — **S1-I1 to
+> S1-I12** in `src/s1-invariants.ts` — asserted after every crash, restart, fork and
+> generated-sequence step:
+>
+> | Invariant | Statement |
+> |---|---|
+> | S1-I1 | At most one claim per effect key; a claim's exclusivity matches its class |
+> | S1-I2 | Every landing has a claim — the world is never touched without a lease |
+> | S1-I3 | Live state equals a fold of the journal, at **every committed prefix** |
+> | S1-I4 | An exclusive effect key lands at most once per family |
+> | S1-I5 | No grant is over-committed in any unit; no ledger figure is negative |
+> | S1-I6 | A terminal invocation holds no reservation |
+> | S1-I7 | Every landed exclusive key is reported as protected |
+> | S1-I8 | Sequence numbers are dense and monotonic within each execution |
+> | S1-I9 | The hash chain links, and each self hash recomputes |
+> | S1-I10 | Every payload matches its committed hash, unless tombstoned |
+> | S1-I11 | A grant chain is acyclic |
+> | S1-I12 | Every invocation references a grant its family knows |
+>
+> S1-I3 is the load-bearing one and is I25 generalised: everything else can pass while live
+> and replayed state quietly disagree, which is exactly how F-6, F-8 and F-9 survived.
+>
+> They are asserted against the **fold's output**, not against kernel internals, so the same
+> checks apply to state the kernel built live and state an independent reader rebuilt from
+> the journal. Every invariant below is either checked at runtime by
 `prototypes/kernel-semantics/src/invariants.ts` (asserted after *every* operation in the
 property and coverage suites), enforced structurally by the kernel's construction, or
 enforced statically in CI. None is aspirational.
