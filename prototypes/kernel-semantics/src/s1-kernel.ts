@@ -232,6 +232,7 @@ export class S1Kernel {
     const lease = registry.acquire(familyId, writerId as never, cur?.epoch ?? 0);
     this.registry = registry;
     this.signer = signer;
+    this.writerId = writerId;
     this.lease = { ...lease, keyId: signer.keyId };
     return this.lease;
   }
@@ -239,8 +240,29 @@ export class S1Kernel {
   /** Current writer lease, if fenced. */
   writerLease(): WriterLease | null { return this.lease; }
 
-  constructor(storage: Storage) {
+  private writerId: string | null;
+
+  constructor(storage: Storage, fencing?: { registry: WriterRegistry; signer: Signer; writerId: string }) {
     this.storage = storage;
+    this.registry = fencing?.registry ?? null;
+    this.signer = fencing?.signer ?? null;
+    this.writerId = fencing?.writerId ?? null;
+  }
+
+  /**
+   * Take the lease for a family before its first append.
+   *
+   * Fencing must be configured at construction, not bolted on afterwards: acquiring a
+   * lease after the first record leaves an unsigned prefix in a signed journal, and an
+   * unsigned prefix is indistinguishable from one whose MAC an attacker stripped
+   * (docs/20 F-39, found while writing the authority suite).
+   */
+  private ensureLease(familyId: FamilyId): void {
+    if (this.registry === null || this.signer === null || this.writerId === null) return;
+    if (this.lease !== null && this.lease.familyId === familyId) return;
+    const cur = this.registry.current(familyId);
+    const l = this.registry.acquire(familyId, this.writerId as never, cur?.epoch ?? 0);
+    this.lease = { ...l, keyId: this.signer.keyId };
   }
 
   register(p: CapabilityProvider): void { this.caps.set(p.manifest.id, p); }
@@ -257,6 +279,7 @@ export class S1Kernel {
     const familyId = execId as unknown as FamilyId;   // root execution names the family
     this.families.set(familyId, emptyFamily(familyId));
     this.familyOf.set(execId, familyId);
+    this.ensureLease(familyId);
     this.commit(familyId, execId, [{
       kind: 'execution.created',
       payload: { definitionHash: opts?.definitionHash ?? 'D1' },

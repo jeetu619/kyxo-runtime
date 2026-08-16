@@ -40,7 +40,13 @@ import type {
   GrantId, InvocationId, InvocationState,
 } from './types.ts';
 
-export const S1_PROTOCOL_VERSION = '2026-08-17';
+/**
+ * Format candidate. `2026-08-17` is HISTORICAL and its meaning is fixed: journals written
+ * under it mean what they meant. S1b changed effect identity, added writer identity and a
+ * MAC, and made unknown required kinds fail closed — all semantic changes, so the
+ * identifier moves rather than the meaning (PART 19).
+ */
+export const S1_PROTOCOL_VERSION = '2026-08-18';
 
 /** Root of a lineage tree. Every execution forked from another shares its family. */
 export type FamilyId = string & { readonly __brand: 'FamilyId' };

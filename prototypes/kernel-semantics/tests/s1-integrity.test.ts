@@ -350,7 +350,7 @@ test('B8/I9: the protocol version is stamped on every event and is the format\'s
 
   const versions = new Set(f.k.events(f.familyId).map((e) => e.protocolVersion));
   assert.deepEqual([...versions], [S1_PROTOCOL_VERSION], 'one revision writes one version');
-  assert.equal(S1_PROTOCOL_VERSION, '2026-08-17');
+  assert.equal(S1_PROTOCOL_VERSION, '2026-08-18', 'the S1b freeze candidate');
 
   // The version is inside the hash preimage, so it cannot be rewritten after the fact to
   // make records from one revision pass as another.
