@@ -237,12 +237,14 @@ graph LR
   consistent spec could not be written, ADR-002 reopened and the checkpoint composite was wrong.
   **It was written and it holds.** `prototypes/kernel-semantics/` implements it against a
   differential reference model; `17-KERNEL-SEMANTICS.md` is the normative prose,
-  `18-KERNEL-INVARIANTS.md` the 24 checked invariants, `20-SEMANTIC-TEST-RESULTS.md` the results:
-  39 tests, a 32-recovery crash sweep, 4,500 + 4,800 generated operations with a full invariant
-  check after **every** operation, and 70,000 further fuzz operations — all passing, with five real
-  defects found and fixed along the way (including a fork that absorbed an inherited irreversible
-  effect as a silent cache hit, and a staging leak that would have let an unvalidated candidate
-  survive settlement). Two consequences for this roadmap: the record-format freeze may proceed on
+  `18-KERNEL-INVARIANTS.md` the checked invariant set, `20-SEMANTIC-TEST-RESULTS.md` the results —
+  a systematic crash sweep over every write point (clean and torn), fork/dedup/grant/universality
+  suites, and seeded property, coverage and fuzz runs with the full invariant set asserted after
+  **every** generated operation, all passing. Doc 20 carries the current counts and the running
+  list of falsifications, and it is the authority on both; several real defects were found and
+  fixed along the way, including a fork that absorbed an inherited irreversible effect as a silent
+  cache hit and a staging leak that would have let an unvalidated candidate survive settlement.
+  Two consequences for this roadmap: the record-format freeze may proceed on
   evidence rather than on argument, and two entries in the §4 risk register are retired (see
   *Retired by executable evidence*). What the gate does **not** discharge is stated there too — the
   semantic kernel runs on in-memory storage in one process, so it validates the *semantics*, not
@@ -590,7 +592,7 @@ retirement still holds.
 
 | Retired risk | Why it was live | What closed it |
 |---|---|---|
-| **Fork/checkpoint coherence** — that `resume` and `fork` could not be given consistent semantics at all: dedup-state ownership across a fork with a non-empty parent suffix was undefined, and `restore` could neither rewind nor reconcile (distsys FATAL-1; amendment A1 made a written spec a Wave-0 exit gate precisely because it might not be writable, in which case ADR-002 reopened) | Phase-1 had no `fork()`; journal replay rebuilt past the cut; effect identity had no lineage scope, so a fork either inherited everything or nothing and both were wrong | The spec was written **and built**: resume folds snapshot + committed suffix within one lineage; fork branches at the cut with a new execution identity, lineage-scoped effect identity, marked inheritance, mandatory dispositions for pendings, and loud refusal of inherited unsafe effects. `fork.test.ts` (8 tests), the differential fork-isolation test across 21 seeds, and invariants I11/I12/I13/I24 hold it. The gate found the real bug it existed to find: doc 20 F-1, a fork absorbing an inherited irreversible effect as a silent cache hit |
+| **Fork/checkpoint coherence** — that `resume` and `fork` could not be given consistent semantics at all: dedup-state ownership across a fork with a non-empty parent suffix was undefined, and `restore` could neither rewind nor reconcile (distsys FATAL-1; amendment A1 made a written spec a Wave-0 exit gate precisely because it might not be writable, in which case ADR-002 reopened) | Phase-1 had no `fork()`; journal replay rebuilt past the cut; effect identity had no lineage scope, so a fork either inherited everything or nothing and both were wrong | The spec was written **and built**: resume folds snapshot + committed suffix within one lineage; fork branches at the cut with a new execution identity, lineage-scoped effect identity, marked inheritance, mandatory dispositions for pendings, and loud refusal of inherited unsafe effects. `fork.test.ts`, the differential fork-isolation property test, and invariants I11 / I12 / I13 / I24 hold it. The gate found the real bugs it existed to find — doc 20 F-1 (a fork absorbing an inherited irreversible effect as a silent cache hit) and the later restart-durability findings in the same series, each closed by a new invariant rather than a patch |
 | **"The commit gate is voluntary"** — that verification-at-commit was a convention a capability or strategy could route around (CTO FATAL; the phase-1 prototype handed every provider a live `KernelApi` with `storeArtifact`/`bind`/`invoke` on `InvokeCtx`) | A capability could produce durable artifacts with no outcome commit, and a strategy could yield a result without ever invoking a verifier — so the gate was enforced by everyone's good behaviour | Capabilities are **pure proposers**: `InvokeCtx` carries data only, effect proposals accumulate in a staging area the provider cannot address, and promotion happens only after kernel validation. A capability that reports success while proposing failing evidence lands `failed` with zero artifacts promoted (`universality.test.ts`); invariants I3/I4/I16/I17 check it after every generated operation, and the property suite caught a real staging leak (doc 20 F-5) |
 
 **What those retirements do not cover** — the residual, now tracked as R13 above: the semantic
@@ -655,9 +657,10 @@ register gains three entries, retires two, and states what the retirements do no
 - Wave 0: new bullet *The semantic exit gate — written, built, and passing*, with the four required
   property classes (linear crash recovery, fork with non-empty suffix, fork with in-flight pendings,
   per-lineage key scope), the double-edged framing (if unwritable, ADR-002 reopens), the built
-  artifacts and volumes (39 tests, 32-recovery crash sweep, 9,300 invariant evaluations per run,
-  70,000 fuzz operations, five defects found and fixed), and an explicit statement of what the gate
-  does *not* discharge.
+  artifacts and the character of the evidence (systematic crash sweep, fork/dedup/grant/universality
+  suites, property + coverage + fuzz runs with a full invariant check after every operation, with
+  doc 20 as the authority on counts and falsifications since it is still accumulating both), and an
+  explicit statement of what the gate does *not* discharge.
 - Wave 0 architecture: lineage-scoped content-inclusive effect identity, the fork-disposition record
   and the checkpoint protected-effect set named among the shapes that must be frozen at v0 because
   retrofitting them would break every recorded journal.

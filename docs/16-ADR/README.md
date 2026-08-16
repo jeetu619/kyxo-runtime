@@ -125,3 +125,16 @@ the index is never told a superseded mechanism is current.
 | **A3, A10, A13** | Reflected where they change a summary: ADR-005 (opaque harnesses are the `declared` grade above the mediation waterline), ADR-003 (eligibility-not-selection; tier ladders carried in manifest data), ADR-015 (child invocations run in fresh cells). |
 | **Vocabulary** | ADR-008's summary now uses the ruled terms — memory cells are **Kind records held in a single-writer store Cell**, never the kernel Cell itself (see `09-CONTEXT-AND-MEMORY.md`). |
 | **Completeness** | ADRs **017–021 existed on disk but were absent from this index**, and the header claimed "sixteen ADRs" with a status legend saying all records were Proposed. Added the *Forced by execution* section with one-line summaries drawn from each record's own context and status lines, corrected the count to twenty-one, split the status legend (001–016 Proposed-as-amended; 017–021 Accepted), and extended the reading orders and normative companions. |
+
+## Phase 2 additions (executable semantics, 2026-08-16)
+
+| ADR | Decision |
+|---|---|
+| [017](ADR-017-capabilities-are-pure-proposers.md) | Capabilities are pure proposers; the commit barrier is structural, not cooperative. Supersedes ADR-012's enforcement mechanism |
+| [018](ADR-018-resume-continues-fork-branches.md) | Resume continues a lineage; fork branches it; effect identity is lineage-scoped. Amends ADR-002/009 |
+| [019](ADR-019-uncertainty-is-an-explicit-state.md) | Unknown external outcomes are an explicit lifecycle state resolved only by typed disposition |
+| [020](ADR-020-authority-is-object-identity.md) | Authority is object identity, not a string; grant limits are ceilings, not reservations. Amends ADR-013/014 |
+| [021](ADR-021-build-vs-extend-re-argued.md) | BUILD vs EXTEND re-argued on executable evidence: a narrower, better-evidenced claim |
+
+See `docs/22-RECORD-FORMAT-FREEZE-DECISION.md` for what these decisions do **not** yet
+settle: the record format is NOT frozen, and 44 findings from adversarial review #2 block it.

@@ -94,12 +94,14 @@ flowchart TB
 invocation → decode emitted actions → execute tool invocations → append results → repeat
 until a termination policy fires. The model is the planner; the loop is a thin dispatcher.
 
-**Production evidence.** The dominant paradigm by deployment mass. Six of the eight surveyed
-coding agents run the canonical streaming native-tool-call loop; Gemini CLI runs the same loop
-behind an explicit per-tool-call scheduler state machine; the two outliers are Aider (a
-bounded-reflection rewrite pipeline, deliberately not an agent loop) and the Copilot cloud
-agent (an artifact-mediated remote pipeline) — the four-loop-model taxonomy of
-`02-ECOSYSTEM-RESEARCH.md` §2.4 (research/notes/coding-agents-landscape.md). Graph engines are
+**Production evidence.** The dominant paradigm by deployment mass — but not universal, and the
+exceptions matter. **Six of the eight** surveyed coding agents run the canonical streaming
+native-tool-call loop (Gemini CLI among them, wrapping it in an explicit per-tool-call
+scheduler state machine — paradigm E applied to tool dispatch, not a different outer loop).
+The two that do **not** are Aider, a bounded-reflection rewrite pipeline that is deliberately
+not an agent loop, and the Copilot cloud agent, an artifact-mediated remote pipeline. See the
+loop-model taxonomy in `02-ECOSYSTEM-RESEARCH.md` §2.4
+(research/notes/coding-agents-landscape.md). Graph engines are
 absent across the inspected set, scoped per amendment A9(i): zero of the **seven
 source-inspected** agents contain one (SOURCE-CODE OBSERVATION/HIGH); the Copilot cloud agent
 shows none in its documented pipeline (FACT, platform docs); Windsurf/Cascade is press-level
@@ -869,7 +871,7 @@ corrected in place with the analysis that forced each change retained and marked
 
 | Amendment | Change |
 |---|---|
-| **A9(i)** | §2.A *Production evidence*: "All eight competitive coding agents run it, and zero contain a graph engine (SCO/HIGH)" replaced — the loop claim is now six-of-eight canonical plus Gemini CLI's scheduler variant, with Aider and Copilot cloud named as the two non-loop outliers (matching doc 02 §2.4's four-loop taxonomy, which this document previously contradicted); the graph claim is now the scoped triple — seven source-inspected (SCO/HIGH), Copilot cloud by documented pipeline (FACT), Windsurf `n/e`. §4.1 convergence fact 4 rescoped identically and re-labelled as corroboration for facts 1–3 rather than load-bearing evidence. The §4.1 mermaid diagram's "Coding agents ×8 … zero graph engines" subgraph relabelled to the inspected set. Docs 02 §2.4/§3.1 and 03 §2.2/B1 now state the identical triple. |
+| **A9(i)** | §2.A *Production evidence*: "All eight competitive coding agents run it, and zero contain a graph engine (SCO/HIGH)" replaced — the loop claim is now **six of eight** running the canonical loop (Gemini CLI among them, its scheduler read as paradigm E applied to tool dispatch), with Aider and the Copilot cloud agent named as the two that do not — matching doc 02 §2.4's loop-model taxonomy, which this document previously contradicted, and stated as a partition that sums to eight; the graph claim is now the scoped triple — seven source-inspected (SCO/HIGH), Copilot cloud by documented pipeline (FACT), Windsurf `n/e`. §4.1 convergence fact 4 rescoped identically and re-labelled as corroboration for facts 1–3 rather than load-bearing evidence. The §4.1 mermaid diagram's "Coding agents ×8 … zero graph engines" subgraph relabelled to the inspected set. Docs 02 §2.4/§3.1 and 03 §2.2/B1 now state the identical triple. |
 | **A2** | §4.2 requirement 7: "a lineage tree the kernel decrements at commit" → reserve-at-lease / settle-at-outcome. §4.4 bullet 2 rewritten: admission reserves against every ancestor's remaining budget with the reservation durable **before** dispatch; outcome settles and releases the remainder; three distinct event kinds (`grant.reserved`, `grant.settled`, `grant.released`); federation's reserve/reconcile named as the same mechanism with lagged settlement. The retired decrement-at-commit wording is quoted with the reason it failed (check-then-spend window; hold lost on a crash between dispatch and commit). |
 | **A10** | §4.4 bullet 3: `budget-exceeded` suspensions carry `origin: kernel`, per the provider / policy / kernel discriminator with distinct resume semantics. |
 | **Consistency (doc 17 §9a)** | §4.4 bullet 1: added that grant limits are **ceilings enforced along the whole chain at admission**, not partitions — siblings are validated independently and may overcommit in aggregate while spend stays chain-bounded. Guards against reading §2.I's "clean budget partitioning per worker" (a description of the supervisor *paradigm's* affordance) as a statement of Kyxo kernel semantics. |

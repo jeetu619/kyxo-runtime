@@ -454,7 +454,7 @@ Two failure modes deserve prose because they are the sneaky ones.
 
 The honest summary of the MVP's epistemic role: Phases 36–37 cannot *prove* the hypothesis — universality claims are only ever falsified or survived. What the MVP can do is put all eight claims in a position where surviving is informative: four adapters spanning the genuinely divergent paradigms (research/notes/open-model-infrastructure.md §10), four strategies spanning the observed orchestration space (research/notes/coding-agents-landscape.md §1), death-by-SIGKILL at every boundary, budgets that are either reserved before dispatch and settled at outcome in the same transaction as truth or demonstrably not, and — since amendment A6 — a bound on effects that a capability cannot opt out of by declining to call the kernel. That last item is what keeps F7 from being a claim any cooperative middleware could also make. If the kernel is wrong, this MVP is designed to find out in weeks, not after a distributed system is built on top of it.
 
-One class of doubt has already been discharged ahead of the MVP rather than inside it. The interaction of journal, checkpoint, fork and deduplication — the semantics that make D3, D5 and D8 meaningful — was written as an executable property-test spec and **built**: `prototypes/kernel-semantics/` with normative prose in `17-KERNEL-SEMANTICS.md`, checked invariants in `18-KERNEL-INVARIANTS.md`, and results in `20-SEMANTIC-TEST-RESULTS.md` (39 tests, 9,300 invariant evaluations per full run, plus 70,000 fuzz operations, all passing; five real defects found and fixed in the process, including a fork that absorbed an inherited irreversible effect as a silent cache hit). Amendment A1 made that spec a Wave-0 exit gate precisely because a coherent answer might not have existed — ADR-002 would have reopened. It exists, and the MVP inherits the semantics rather than inventing them under demo pressure.
+One class of doubt has already been discharged ahead of the MVP rather than inside it. The interaction of journal, checkpoint, fork and deduplication — the semantics that make D3, D5 and D8 meaningful — was written as an executable property-test spec and **built**: `prototypes/kernel-semantics/` with normative prose in `17-KERNEL-SEMANTICS.md`, checked invariants in `18-KERNEL-INVARIANTS.md`, and results in `20-SEMANTIC-TEST-RESULTS.md` — crash, fork, dedup, grant, universality, property and coverage suites, with the full invariant set asserted after *every* generated operation and a seeded fuzz run on top, all passing. (Doc 20 carries the current counts and is the authority on them; it also carries the falsifications the gate produced, which are the point — a fork absorbing an inherited irreversible effect as a silent cache hit, a leaked staging area, an exported mint guard, protection lost across a restart.) Amendment A1 made that spec a Wave-0 exit gate precisely because a coherent answer might not have existed — ADR-002 would have reopened. It exists, and the MVP inherits the semantics rather than inventing them under demo pressure.
 
 ---
 
@@ -486,8 +486,9 @@ pre-amendment behavior as current fact.
 - §3.3 D8: fork now requires a disposition per pending invocation, a new execution identity, an
   `execution.forked` first event, and an untouched parent lineage.
 - §4 criterion 6: pass condition extended to uncertainty representation and fork dispositions.
-- §6 closing: the Wave-0 property-test gate recorded as **built and passing**, with the volume and
-  the five falsifications, and the note that ADR-002 would have reopened had it not been writable.
+- §6 closing: the Wave-0 property-test gate recorded as **built and passing**, with the suites it
+  comprises and the falsifications it produced (doc 20 cited as the authority on counts, since it is
+  still accumulating them), and the note that ADR-002 would have reopened had it not been writable.
 
 **A2 — reserve-at-lease / settle-at-outcome / release-remainder (completing an incomplete pass).**
 - §1 F7: claim and falsification restated in reserve/settle terms (durable reservation before
