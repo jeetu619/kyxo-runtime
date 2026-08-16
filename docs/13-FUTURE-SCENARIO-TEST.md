@@ -1,9 +1,17 @@
 # 13 — Future-Scenario Test
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document predates the adversarial review; the
+> review's binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14),
+> with the full findings in `research/ADVERSARIAL-REVIEW.md`. Since phase 2 the **executable
+> semantics** in `prototypes/kernel-semantics/` — normative prose in `docs/17-KERNEL-SEMANTICS.md`
+> and `docs/18-KERNEL-INVARIANTS.md` — supersede prose wherever the two disagree.
+> **Applied here:** A2 (scenario P's verdict, the §3 scoreboard, the §0 and §4 counts, §I's
+> accounting aside), A1 (scenario E's compensation carve-out promoted to normative; the fork
+> disposition requirement carried into L and M), and **A9**'s evidence relabeling applied to
+> scenario I and §4.2(5), with A10 aligned incidentally in C — see the Revision record at the
+> foot of this document. **Outstanding:** none known.
+> Where this document conflicts with the Amendment log or the executable semantics, **those
+> govern**.
 
 
 Status: **DRAFT for adversarial review** (mission Phase 32). Written from `research/DESIGN-SPINE.md`
@@ -48,8 +56,15 @@ invocation transition algebra, grant accounting (reserve-at-lease / settle-at-ou
 the append-only truth plane, bind-time sealing of Bindings, checkpoint identity binding, and
 single-writer cells. A scenario passes only if those survive; naming a Kind is never by itself
 an answer. Per the mandate, we deliberately engineered several scenarios to land
-YES-WITH-EXTENSION or NO — a test that always passes is not a test. Final tally: 11 YES,
-6 YES-WITH-EXTENSION, 1 NO.
+YES-WITH-EXTENSION or NO — a test that always passes is not a test.
+
+**Tally, original run (pre-review): 11 YES · 6 YES-WITH-EXTENSION · 1 NO.**
+**Tally as amended (2026-08-16): 12 YES · 6 YES-WITH-EXTENSION · 0 NO.** The single NO —
+scenario P, speculative branching execution — was upheld by the adversarial review and
+*resolved by changing the kernel*: reserve-at-lease / settle-at-outcome accounting is binding
+amendment **A2**, now implemented and asserted in `prototypes/kernel-semantics/`. Both tallies
+are reported because the second is only meaningful with the first beside it: the suite's value
+is that it moved the design, not that it eventually scored well.
 
 ---
 
@@ -130,7 +145,9 @@ first-class checkpoint + trim rather than Continue-As-New gymnastics (spine H5;
 durable-execution.md Implications §2). Budgets: a Grant's quantitative budget is finite by
 design, which is a feature — continuous operation runs on *epochs*: a userland controller
 watches budget-exceeded suspension events and issues fresh attenuated Grants per epoch,
-keeping a human or parent cell in the renewal loop. Supervision uses OTP restart-intensity
+keeping a human or parent cell in the renewal loop. Those are `kernel`-origin suspensions in
+amendment A10's discriminator, and they resume only with a re-grant — so an epoch boundary is
+structurally unable to be crossed by a strategy retrying itself. Supervision uses OTP restart-intensity
 budgets (spine §7).
 
 **Userland build.** Daemon strategy behaviour; epoch-budget controller (a Kind + controller in
@@ -162,8 +179,10 @@ accounting**: attenuation crossing a kernel boundary must be mirrored (child ker
 budget the parent kernel accounts), carried as a reverse-DNS extension over the federation
 edge (A2A's URI-keyed extension mechanism is expressly designed for envelope additions —
 FACT, a2a-protocol.md F10). Cross-boundary settlement is eventual, not transactional; the
-guarantee degrades from "kernel-enforced at commit" to "cap-enforced locally, reconciled
-across the edge."
+guarantee degrades from "kernel-enforced reserve/settle within one kernel" to "cap-enforced
+locally, reconciled across the edge." Amendment A2 makes this less exceptional than it read at
+the time: federation's reserve-then-reconcile *is* the same mechanism with lagged settlement,
+not a special case bolted onto a decrement-at-commit kernel.
 
 **Userland build.** Swarm coordinator strategy; sharding controller; federation adapter with
 the grant-mirroring extension; digest/aggregation Kinds.
@@ -193,17 +212,39 @@ The honest break is with repair semantics: spine §7 names **fork-from-checkpoin
 primary repair verb**. A checkpoint cuts the *cell's* state, not the world's; you cannot fork
 a world in which the arm already moved. For physical effects, repair is compensation (saga
 discipline), not replay. This does not change the Checkpoint object — it restricts the domain
-over which the "primary repair verb" claim holds, and doc 08's failure table must carry the
-carve-out: *irreversible effects repair by compensation; checkpoints repair decision state
-only*.
+over which the "primary repair verb" claim holds.
+
+**That carve-out is now normative, not a documentation request (amendment A1).** What was
+drafted here as "doc 08's failure table must carry the carve-out" has been adjudicated and
+built:
+
+- **Compensation is the normative repair for irreversible effects.** Fork-from-checkpoint
+  repairs *decision state*; compensation repairs *world state*; the two are not substitutes
+  and neither is a fallback for the other.
+- The distinction is carried in the kernel's **declared effect classes** —
+  `external-compensatable` and `external-irreversible` are two of the five, and recovery
+  behaviour derives from the class alone, never from what kind of thing the capability is
+  (doc 17 §5).
+- A fork whose cut has a pending invocation in either class **must** supply an explicit,
+  journaled disposition, and `compensate` is one of the four (`adopt` / `re-lease` /
+  `compensate` / `abandon`); `re-lease` is refused for unsafe classes absent an explicit
+  journaled override (doc 17 §8.2). Forking in silence is a hard failure, which is exactly the
+  robot case: nobody may branch a lineage past a half-completed grasp by default.
+- The `compensatable` capability trait is what tells the kernel a compensation exists. Where
+  the trait is absent the kernel degrades to the safe behaviour — it reports that the effect
+  cannot be repaired rather than guessing (doc 17 §11), which for an actuator is the
+  difference between an incident and an incident report.
+
+So the robot scenario's contribution outlived the scenario: it is the reason the effect-class
+taxonomy exists at all, and it is cited as such in ADR-002.
 
 **Userland build.** Robot environment provider; safety policy stages; actuation manifest
 axes (declared via the governed extension namespace until standardized); compensation
 strategies; sensor→Evidence pipelines.
 
 **Verdict: YES-WITH-EXTENSION** — actuation axes via the manifest extension tier + safety
-policy stages. **Confidence: HIGH** on absorption; the spine amendment (compensation
-co-primary with fork) is flagged as an open issue.
+policy stages. **Confidence: HIGH** on absorption; the spine amendment this scenario proposed
+(compensation co-primary with fork) was **adopted as A1** and is no longer an open issue.
 
 ### F. Laptop-local capability
 
@@ -278,7 +319,11 @@ media in and out, sub-second turn-taking, in-session tool calls (the Realtime/Li
 generalized).
 
 **Absorption.** The session-shaped invocation exists because this cannot be lowered onto
-function calls (FACT/HIGH, open-model-infrastructure.md §7; spine §4). The manifest declares
+function calls — **INFERENCE/HIGH**, grounded in transport FACTs (open-model-infrastructure.md
+§7; spine §4). The label is corrected here per amendment A9: the transport facts are FACT, the
+non-lowerability conclusion drawn from them is not, and the methodology has no mechanism for
+elevating an inference to a fact by confidence alone. The conclusion stands unchanged on the
+honest label. The manifest declares
 transport/session axes (WebRTC/WS/SIP, ephemeral-credential minting), streaming grammar, and
 modality axes. The kernel's move is a disciplined split:
 
@@ -313,7 +358,10 @@ The genuine strain is **budget units**: token-denominated budgets do not measure
 minutes. The Grant's budget dimensions (spine §3.7 enumerates tokens, money, wall-clock,
 invocations, spawn) must be an open, namespaced unit registry with money as the universal
 settlement denominator — treated here as an extension of the grant *schema*, not its
-semantics (reserve, decrement, attenuate, lineage all unchanged).
+semantics (reserve, settle, release, attenuate, lineage all unchanged). Amendment A2's
+three-event model is unit-agnostic by construction, which is precisely why an open unit
+registry can be added without disturbing it: a media-minute reservation and a token
+reservation are the same event kind carrying different units.
 
 **Userland build.** Realtime/Live adapters; media chunking → CAS strategies; VAD/turn policy
 in the harness; media-unit definitions.
@@ -385,7 +433,12 @@ execution: prompts, models, and tool wiring change weekly, which is exactly why 
 rejected positional-replay determinism for record-and-inject journaling (spine H5) and made
 version-by-data + fork-from-checkpoint the upgrade verb (spine §7) — the anti-Temporal-patching
 decision. Checkpoints bound to definition identity make the upgrade an explicit, journaled
-fork rather than a silent drift. Budget epochs (scenario C) handle long-horizon spend.
+fork rather than a silent drift — and, under amendment A1, a fork whose cut has in-flight
+invocations must carry an explicit disposition for each (`adopt` / `re-lease` / `compensate` /
+`abandon`), or it fails loudly. That rule bites hardest exactly here: over weeks, the odds that
+an upgrade lands while something external is pending approach certainty, so the upgrade
+controller must decide about each pending effect rather than inheriting a default. Budget
+epochs (scenario C) handle long-horizon spend.
 
 **Userland build.** Escalation/reminder strategies; upgrade controllers that fork checkpoints
 onto new definition versions; long-horizon budget policies.
@@ -399,9 +452,13 @@ pricing, policy, capability, or geopolitical reasons. Move the work without rest
 
 **Absorption.** The showcase for Checkpoint + Binding renegotiation, with commercial proof
 that state-transfer migration works (Cursor's `&` handoff — spine §3.8). Mechanics: cut a
-Checkpoint (journal position + state snapshot + pending invocations); re-negotiate a Binding
-against the new target's manifest — missing required axes fail loudly, never degrade silently
-(spine §4); the context-management system *recompiles* the per-invocation view from
+Checkpoint (journal position + state snapshot + pending invocations with their effect classes
+and lease epochs); disposition every pending invocation explicitly if the migration proceeds
+by fork rather than by in-lineage resume (amendment A1 — an in-flight call to the *old*
+provider is precisely the case that must not be silently adopted or silently redone);
+re-negotiate a Binding against the new target's manifest — missing required axes fail loudly,
+never degrade silently (spine §4); the context-management system *recompiles* the
+per-invocation view from
 kernel-side truth (journal artifacts, memory cells) rather than replaying wire history. Two
 frictions are structural and must be stated, not hidden:
 
@@ -473,8 +530,8 @@ of old Kinds under the 12-month stability-class clock (spine §4).
 ## 2. The engineered hostile scenarios P–R
 
 These three were designed against this kernel's specific load-bearing assumptions:
-grant accounting (P — resolved by amendment A2), Binding as the sole authority attachment point (Q),
-and bind-time sealing of manifests (R).
+grant accounting (P — which broke, and was repaired by amendment A2), Binding as the sole
+authority attachment point (Q), and bind-time sealing of manifests (R).
 
 ### P. Speculative branching execution
 
@@ -493,7 +550,9 @@ cell identity encode the tree. Policy survives: a deny-class stage restricts spe
 dispatch to capabilities whose manifests declare purity or snapshot-isolation, because
 side effects on the real world cannot be speculated safely.
 
-**What breaks is Grant accounting.** Spine §3.7: "the kernel decrements at commit." Fifteen of
+**What breaks is Grant accounting** — as the kernel stood when this scenario was first run.
+The rule then was spine §3.7's "the kernel decrements at commit" *(superseded by amendment A2;
+quoted because the analysis that killed it is the entire point of this scenario)*. Fifteen of
 sixteen branches never commit to the truth plane — yet their cost is real and billed.
 Charge-at-commit undercharges by construction, and no extension mechanism fixes it, because
 the charge point is kernel semantics, not schema.
@@ -512,13 +571,14 @@ flowchart TD
     BN -.->|canceled — still settled| G
 ```
 
-**Required kernel change.** Split the charge point from the commit point: **reserve-at-lease /
-settle-at-outcome** two-phase accounting. Every effectful invocation reserves against its
-Grant when its lease is taken (leases already exist for every external effect — spine §7) and
-settles at outcome — *charged whether or not the outcome is promoted to the truth plane*.
-Commit-time remains the point where outcomes become truth; it stops being the point where
-money moves. This is a semantic change to the Grant object and is proposed as a spine
-amendment. It is also independently justified: attempt-based cost with outcome-based truth is
+**Required kernel change — since made.** Split the charge point from the commit point:
+**reserve-at-lease / settle-at-outcome** two-phase accounting. Every effectful invocation
+reserves against its Grant when its lease is taken (leases already exist for every external
+effect — spine §7) and settles at outcome — *charged whether or not the outcome is promoted to
+the truth plane*. Commit-time remains the point where outcomes become truth; it stops being
+the point where money moves. This was a semantic change to the Grant object, proposed here as
+a spine amendment and **adopted as A2**. It is also independently justified: attempt-based
+cost with outcome-based truth is
 exactly the two-plane distinction Temporal's Workflow Streams was forced into for retries
 (FACT, durable-execution.md §2 — failed attempts' tokens are real even though durable state
 sees only the successful return), and the Pydantic AI usage-accounting hole shows what
@@ -527,16 +587,32 @@ silently dropped attempt-cost looks like in production (FACT, durable-execution.
 **Userland build.** Speculative dispatch strategies; purity/isolation manifest axes;
 branch-pruning policies.
 
-**Verdict: NO — kernel change required**: Grant accounting moves from decrement-at-commit to
-reserve-at-lease/settle-at-outcome. **Confidence: MEDIUM** (that the change suffices — HIGH
-that the current semantics fail the scenario).
+**Verdict (original run, pre-review): NO — kernel change required**: Grant accounting moves
+from decrement-at-commit to reserve-at-lease/settle-at-outcome. **Confidence: MEDIUM** (that
+the change suffices — HIGH that the current semantics fail the scenario).
 
-> **Resolved (adversarial review, 2026-08-16).** This verdict was upheld and the kernel change
-> adopted as binding amendment **A2**: reservation at lease, settlement at outcome, release of
-> the unused remainder, with distinct `grant.reserved` / `grant.settled` / `grant.released`
-> event kinds. The scenario therefore now reads **YES — kernel survives as amended**; it is
-> retained here as the analysis that forced the change, and it is the clearest demonstration
-> that the scenario suite is load-bearing rather than decorative.
+**Verdict (current, as amended): YES.** The kernel change this scenario demanded was upheld by
+the adversarial review, adopted as binding amendment **A2**, and has since been implemented:
+reservation at lease, settlement at outcome, release of the unused remainder, with distinct
+`grant.reserved` / `grant.settled` / `grant.released` event kinds
+(`prototypes/kernel-semantics/src/kernel.ts`), under invariant **I23** — "budget accounting is
+reserve-then-settle, never negative, never over-limit" — which is asserted after every
+operation in the property and coverage suites and checked differentially against the reference
+model. Speculative branching therefore lands on the kernel *as it now exists* with no further
+kernel change: all sixteen branches reserve at lease and settle their real cost at outcome,
+the fifteen discarded branches settle and are recorded `canceled`, and only the promoted
+branch's *outcomes* enter the truth plane. Reservation is durable before dispatch, so a crash
+mid-speculation cannot lose a hold. **Confidence: HIGH** that the amended semantics absorb the
+scenario as posed; MEDIUM on the partially-observable "quantum-ish" variant, where the branch
+set itself is not enumerable at lease time and reservation must be taken against a declared
+worst-case fan-out — a case with no prior art and no prototype coverage.
+
+> **Why the whole superseded analysis above is retained.** Everything from "What breaks is
+> Grant accounting" onward describes a rule the kernel no longer has. It stays because it is
+> the clearest evidence in the research program that this suite is load-bearing rather than
+> decorative: an engineered hostile scenario found a real defect in the one kernel object with
+> no prior art, and the object was changed rather than the scenario softened. Deleting the
+> analysis would leave the amendment looking like a preference.
 
 ### Q. Capabilities negotiating with each other without kernel mediation
 
@@ -621,7 +697,7 @@ epoch quantization; the continuous-undeclared world weakens the contract materia
 | B | Goal-seeking model, no prompts | YES-WITH-EXT | Invocation (async lifecycle), Cell (remote), Grant (leased cap) | New axis tier + Kind + protocol-edge adapter | HIGH |
 | C | Continuously-operating capability | YES | Cell, Checkpoint (+trim), Grant (epochs in userland) | — | HIGH |
 | D | 10,000-agent swarm | YES-WITH-EXT | Cell, Grant (spawn depth/width), Event (correlation) | Federation-edge grant mirroring extension | MEDIUM |
-| E | Physical robot | YES-WITH-EXT | Capability (environment), Grant (risk class), policy pipeline | Actuation axes + safety stages; repair-verb carve-out | HIGH |
+| E | Physical robot | YES-WITH-EXT | Capability (environment), Grant (risk class), policy pipeline | Actuation axes + safety stages; compensation carve-out **now normative (A1)** — effect classes + the `compensate` fork disposition | HIGH |
 | F | Laptop-local capability | YES | Whole kernel (design center), Capability (resource axes) | — | HIGH |
 | G | Opaque remote AI | YES | Capability (visibility axis), Binding (fail-loud), Artifact (taint) | — | HIGH |
 | H | Capability creating capabilities | YES | Grant (ocap: creation ≠ authority), Artifact (provenance), Kind | — | HIGH |
@@ -632,11 +708,17 @@ epoch quantization; the continuous-undeclared world weakens the contract materia
 | M | Mid-execution provider migration | YES | Checkpoint, Binding (renegotiation), context compiler | — | HIGH |
 | N | Unlimited context, costly retrieval | YES | Context compiler (budget redefined), Capability (caching axes) | — | MEDIUM-HIGH |
 | O | "Agent" obsolete | YES | Kind registry; non-primitives discipline | — | HIGH |
-| P | Speculative branching execution | **NO** | Cell (branches), Event (branch-labeled), **Grant (breaks)** | **Kernel change: reserve-at-lease / settle-at-outcome accounting** | MEDIUM |
+| P | Speculative branching execution | **YES (as amended)**<br>*original run: NO* | Cell (branches), Event (branch-labeled), **Grant (broke, now repaired)** | **Kernel change made: reserve-at-lease / settle-at-outcome accounting — amendment A2, invariant I23** | HIGH (as posed);<br>MEDIUM (partially-observable variant) |
 | Q | Unmediated peer negotiation | YES-WITH-EXT | Grant (scope narrowed), policy pipeline, execution environments | Brought-authority axis + confinement stages | MEDIUM |
 | R | Self-mutating manifest mid-binding | YES-WITH-EXT | Binding (epoch invalidation), advertisement events, telemetry | Drift/epoch axes + rebind controllers | MEDIUM |
 
-**Tally: 11 YES · 6 YES-WITH-EXTENSION · 1 NO.**
+**Tally as amended (2026-08-16): 12 YES · 6 YES-WITH-EXTENSION · 0 NO.**
+**Tally as originally run (pre-review): 11 YES · 6 YES-WITH-EXTENSION · 1 NO.**
+
+The difference is one row, P, and it is not a re-scoring: the kernel changed underneath it.
+Reporting only the amended tally would hide the single most useful result this suite produced;
+reporting only the original would state a defect the kernel no longer has as current fact.
+Both stand.
 
 ---
 
@@ -663,29 +745,39 @@ Ranked by how many scenarios leaned on them as the *primary* absorber:
 5. **Grant** — the most interesting result: heavily load-bearing (D, H, Q) *and* the only
    outright failure (P). The one genuinely novel kernel object is also the least
    evidence-backed, and the test found its soft spot exactly where the spine flagged
-   "limited prior art."
+   "limited prior art." The repair (amendment A2) landed on the *accounting rule*, not on the
+   object: reserve/settle/release replaced decrement-at-commit, and Grant's other duties —
+   attenuation, lineage, revocation, risk class — came through the suite untouched. An object
+   that fails only in its timing rule is an object that was chosen correctly and specified
+   carelessly.
 
 **Evidence** — 12/18 scenarios resolved by manifest axes/tiers; the invocation algebra
-required zero new states across 18 scenarios; the only NO landed on Grant charge semantics.
+required zero new states across 18 scenarios; the only NO landed on Grant charge semantics,
+and has since been repaired by amendment A2 rather than by removing or splitting the object.
 **Interpretation** — the kernel's extension mechanisms are correctly placed: variation
 arrives overwhelmingly as capability-surface diversity, which is data, and only rarely as
 lifecycle or accounting semantics, which are code. **Implication** — invest spec effort
 proportionally: the manifest grammar (06-CAPABILITY-SPEC) is the document that must be
-gotten right first; the invocation algebra can be frozen with more confidence than the grant
-accounting rules. **Confidence** — HIGH.
+gotten right first; the invocation algebra could be frozen with more confidence than the grant
+accounting rules. *(That last clause was written before A2. The accounting rules have since
+been rewritten, implemented and put under a checked invariant — I23 — so the confidence gap
+between the two has closed from the accounting side rather than by lowering the bar for the
+algebra.)* **Confidence** — HIGH.
 
 ### 4.2 The brittle assumptions
 
-**(1) Charge-at-commit grant accounting — brittle, change proposed.**
+**(1) Charge-at-commit grant accounting — was brittle; change adopted and built (A2). CLOSED.**
 **Evidence** — scenario P breaks it outright; scenario I strains it (media units); the
 attempt-vs-outcome cost split is independently evidenced by Workflow Streams' retry-visible
 streams and Pydantic AI's lost delegate-usage accounting (FACT, durable-execution.md §2).
 **Interpretation** — cost is a property of *attempts*; truth is a property of *outcomes*;
 conflating their timing was an error inherited from thinking of commit as the only
-authoritative moment. **Implication** — adopt reserve-at-lease / settle-at-outcome as a spine
-amendment before V1 freezes the journal schema; charge events become distinct event types
-from outcome events. **Confidence** — HIGH that the current rule is wrong; MEDIUM that the
-proposed rule is complete.
+authoritative moment. **Implication** — reserve-at-lease / settle-at-outcome was **adopted as
+amendment A2** before V1 froze the journal schema, and charge events are now distinct event
+kinds from outcome events (`grant.reserved`, `grant.settled`, `grant.released`), with
+reservation durable before dispatch so a crash cannot lose a hold. **Confidence** — HIGH that
+the old rule was wrong; the completeness question that was MEDIUM here is now carried by
+invariant I23 and the differential test against the reference model rather than by argument.
 
 **(2) "The journal sees everything" — must be restated before it is ever promised.**
 **Evidence** — scenarios A (provider-held conversations), I (out-of-band media planes), J
@@ -708,13 +800,19 @@ and telemetry decay as first-class from V1 (not as later hardening), and make bi
 freshness a standard policy stage. **Confidence** — MEDIUM.
 
 **(4) Fork-from-checkpoint as the primary repair verb** fails for irreversible physical
-effects (scenario E). Compensation must be documented as co-primary in doc 08. Confidence
-HIGH; small blast radius.
+effects (scenario E). **Adopted as amendment A1 and CLOSED**: compensation is normative for
+irreversible effects and is documented as co-primary in doc 08, specified in doc 17 §5 (the
+five declared effect classes) and §8.2 (the `compensate` fork disposition), and enforced by
+invariant I13. Confidence HIGH; the blast radius turned out to be larger than "small" — the
+carve-out is what produced the effect-class taxonomy the whole recovery model now derives
+from.
 
 **(5) Request-shaped invocation** — tested and *not* found brittle: the session shape
-(spine §4, forced by Realtime/Live — FACT/HIGH) took the load in B, I, and R. The earlier
-decision to refuse lowering sessions onto function calls is the single most vindicated call
-in the test.
+(spine §4, forced by Realtime/Live — **INFERENCE/HIGH** on transport FACTs, relabeled per
+amendment A9) took the load in B, I, and R. The earlier decision to refuse lowering sessions
+onto function calls is the single most vindicated call in the test — and it is worth noting
+that it was vindicated while resting on an inference, which is the argument for labeling
+inferences honestly rather than promoting the ones that turn out well.
 
 ### 4.3 Pre-commitments to AVOID
 
@@ -723,9 +821,11 @@ To keep the brittle spots flexible, V1 must **not**:
 1. **Freeze budget units as an enumeration.** Namespace units (reverse-DNS like everything
    else); money is the universal settlement denominator; token/wall-clock/invocation are
    predefined entries, not the schema.
-2. **Fuse charge events with outcome events in the journal schema.** Even if reserve/settle
-   ships later, distinct event types for reservation, settlement, and outcome cost nothing
-   now and make the P amendment additive instead of breaking.
+2. **Fuse charge events with outcome events in the journal schema.** *(Discharged: reserve/
+   settle shipped with A2, and `grant.reserved` / `grant.settled` / `grant.released` are
+   distinct kinds from the outcome events — the separation this rule was protecting is now a
+   property of the schema rather than a promise about it. The rule stands as a standing
+   prohibition against re-fusing them.)*
 3. **Promise total-content audit.** Specify journal completeness as mediated-commitments
    completeness (4.2.2) in every public contract document.
 4. **Require the kernel on the data plane.** The manifest must be able to declare out-of-band
@@ -743,17 +843,125 @@ To keep the brittle spots flexible, V1 must **not**:
    itself privilege" is scoped to kernel-issued authority; brought authority is declared,
    confined, or assumed hostile (scenario Q).
 
-### 4.4 Proposed spine amendments (for the adversarial-review phase)
+### 4.4 Proposed spine amendments — and their disposition after review
 
-1. **Grant accounting**: decrement-at-commit → reserve-at-lease / settle-at-outcome (from P). **ADOPTED** as binding amendment A2 in the spine amendment log (2026-08-16); scenario P's NO verdict is thereby resolved.
+This section was written *for* the adversarial-review phase. That phase has since run; the
+disposition of each proposal is recorded here rather than left as a standing request.
+
+1. **Grant accounting**: decrement-at-commit → reserve-at-lease / settle-at-outcome (from P).
+   **ADOPTED** as binding amendment **A2** (spine amendment log, 2026-08-16), implemented in
+   `prototypes/kernel-semantics/` with distinct `grant.reserved` / `grant.settled` /
+   `grant.released` kinds and invariant I23. Scenario P's NO verdict is thereby resolved.
 2. **Repair verbs**: fork-from-checkpoint primary *for decision state*; compensation primary
-   for irreversible external effects (from E).
+   for irreversible external effects (from E). **ADOPTED** as part of binding amendment **A1**,
+   which additionally requires an explicit journaled disposition per pending invocation at a
+   fork cut and makes effect identity lineage-scoped. Doc 17 §5/§8.2 carries the normative
+   text; scenario E is promoted into ADR-002.
 3. **Guarantee scoping**: ocap claims scoped to kernel-issued authority; brought-authority
-   manifest axis added to the standard axis list (from Q).
-4. **Budget units**: open namespaced registry, not an enumeration (from I).
+   manifest axis added to the standard axis list (from Q). **SUBSTANTIALLY ADJUDICATED** by
+   amendment **A3**, which puts a sealed guarantee grade (`enforced` / `observed` / `declared`)
+   on every Binding per policy-relevant property and restricts kernel-grade enforcement claims
+   to below the mediation waterline. The narrower deliverable this scenario asked for — a
+   named brought-authority axis in the standard axis list, plus the explicit guarantee-boundary
+   statement in doc 11 — was **not** separately adjudicated in the A1–A14 log and remains
+   outstanding against docs 06 and 11.
+4. **Budget units**: open namespaced registry, not an enumeration (from I). **NOT separately
+   adjudicated** in the amendment log. It survives as a §4.3 pre-commitment (item 1) and is
+   compatible with A2 as noted in scenario I, but no amendment has ratified the registry, so
+   nothing in the frozen schema depends on it yet.
 
 The kernel's nine objects survived seventeen of eighteen futures without semantic change, and
-the eighteenth failure is repairable with machinery (leases) the kernel already owns. That is
-the result the minimality test predicts if the object selection is right — and the
-concentration of both load and failure in Grant, the one object with no prior art, is exactly
-where the adversarial review should now aim.
+the eighteenth failure proved repairable with machinery (leases) the kernel already owned —
+the repair is now built and under a checked invariant, which is the strongest form this claim
+can take. That is the result the minimality test predicts if the object selection is right.
+The concentration of both load and failure in Grant, the one object with no prior art, is
+where the adversarial review did in fact aim, and A2 and A8 are what it returned with.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendment A2's resolution of scenario P propagated through the verdict, the scoreboard and
+every summary count; amendment A1's compensation carve-out promoted from "must be documented"
+to normative, and its fork-disposition rule carried into the scenarios where pendings are
+likely. Nothing here now states pre-amendment kernel behavior as current fact; the superseded
+analysis is retained where it is the evidence for a change, and marked as superseded at the
+point of use.
+
+**A2 — reserve-at-lease / settle-at-outcome / release-remainder (scenario P).**
+- §0: single "Final tally: 11 YES, 6 YES-WITH-EXTENSION, 1 NO" replaced by both tallies —
+  original run and as-amended (12 · 6 · 0) — with the reason both are reported.
+- §0 anti-vacuity rule already named reserve/settle as the grant-accounting semantics under
+  test; left as is.
+- §2 preamble: P described as the assumption that broke and was repaired, not merely
+  "resolved".
+- §2 P: the spine §3.7 "decrements at commit" quote explicitly marked **superseded by A2**
+  and retained as the analysis that killed it; "Required kernel change" → "Required kernel
+  change — since made"; a second, current verdict added — **YES**, with the implementation
+  (`grant.reserved` / `grant.settled` / `grant.released`), invariant **I23**, durable
+  pre-dispatch reservation, and an honest split of confidence (HIGH as posed, MEDIUM on the
+  partially-observable variant where the branch set is not enumerable at lease time). The
+  original NO is preserved verbatim above it and labeled as the original run.
+- §2 P: the existing "Resolved" blockquote rewritten to explain *why* the superseded analysis
+  is retained rather than deleted.
+- §3 scoreboard: P's row now reads **YES (as amended)** with the original NO beneath it,
+  Grant marked "broke, now repaired", the change column naming A2 and I23, and split
+  confidence. Tally line replaced by both tallies plus the note that the difference is a
+  kernel change, not a re-scoring.
+- §4.1: Grant's ranking annotated — the failure was in the *timing rule*, not the object;
+  attenuation, lineage, revocation and risk class came through untouched. The "invocation
+  algebra can be frozen with more confidence than the grant accounting rules" judgment marked
+  as pre-A2 and updated.
+- §4.2(1): retitled "was brittle; change adopted and built (A2). CLOSED", with the MEDIUM
+  completeness caveat reassigned from argument to invariant I23 and the differential test.
+- §4.3(2): the "don't fuse charge and outcome events" pre-commitment marked discharged, kept
+  as a standing prohibition against re-fusing them.
+- §2 I: "(reserve, decrement, attenuate, lineage all unchanged)" → "(reserve, settle, release,
+  attenuate, lineage all unchanged)", with the observation that A2's three-event model is
+  unit-agnostic, which is why an open unit registry does not disturb it.
+
+**A1 — fork/effect-identity semantics (scenario E, carried into L and M).**
+- §1 E: the carve-out is **no longer a documentation request**. New normative block:
+  compensation repairs world state while fork repairs decision state (not substitutes); the
+  five declared effect classes, with `external-compensatable` / `external-irreversible` named;
+  the mandatory journaled disposition at a fork cut with `compensate` among the four and
+  `re-lease` refused for unsafe classes absent an override; and the `compensatable` trait with
+  the kernel's degrade-to-safe behaviour where it is absent. Closing note that the scenario's
+  contribution outlived it — it is why the effect-class taxonomy exists (ADR-002).
+- §1 E verdict: "the spine amendment … is flagged as an open issue" → adopted as A1, no longer
+  open.
+- §3 scoreboard row E: extension column updated to "compensation carve-out now normative (A1)
+  — effect classes + the `compensate` fork disposition".
+- §4.2(4): marked **CLOSED** with pointers to doc 08, doc 17 §5/§8.2 and invariant I13, and
+  the "small blast radius" estimate corrected — the carve-out produced the taxonomy the whole
+  recovery model derives from.
+- §1 L: multi-week upgrade forks must disposition every in-flight invocation at the cut, with
+  the reason this scenario is where the rule bites hardest (over weeks, a pending external
+  effect at upgrade time approaches certainty).
+- §1 M: migration mechanics now name pending invocations' effect classes and lease epochs in
+  the cut, and require explicit dispositions when migration proceeds by fork — an in-flight
+  call to the *old* provider being exactly the case that must not be silently adopted or
+  silently redone.
+
+**A9 — evidence relabeling.** Two label errors of exactly the kind A9 adjudicates were live in
+this document and are corrected:
+- §1 I (Absorption opener): "this cannot be lowered onto function calls (FACT/HIGH)" →
+  **INFERENCE/HIGH grounded in transport FACTs**, with the reason stated inline — the transport
+  facts are FACT, the non-lowerability conclusion drawn from them is not, and the methodology
+  has no label-elevation mechanism. The conclusion is unchanged.
+- §4.2(5): the same claim, same correction, plus the observation that the call was vindicated
+  *while resting on an inference* — which is the argument for labeling inferences honestly
+  rather than promoting the ones that happen to come good.
+
+**A10 (incidental).** §1 C: budget-exceeded suspensions identified as `kernel`-origin in A10's
+discriminator, resumable only with a re-grant — so an epoch boundary cannot be crossed by a
+strategy retrying itself.
+
+**§4.4 rewritten from "proposed amendments" to "proposed amendments and their disposition".**
+Items 1 and 2 recorded as ADOPTED (A2, A1). Item 3 recorded as **substantially adjudicated by
+A3**, with the residue stated honestly: the named brought-authority axis and doc 11's explicit
+guarantee-boundary statement were not separately adjudicated and remain outstanding against
+docs 06 and 11. Item 4 (open namespaced budget-unit registry) recorded as **not adjudicated**
+— it survives as a §4.3 pre-commitment, and nothing in the frozen schema depends on it. The
+closing paragraph updated so the eighteenth-scenario repair is stated as built and
+invariant-checked rather than as available machinery.

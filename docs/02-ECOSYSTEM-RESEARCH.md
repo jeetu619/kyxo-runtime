@@ -1,9 +1,16 @@
 # 02 — Ecosystem Research: Integrative Synthesis
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A9(i). Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document was drafted before the adversarial
+> review; the review's binding adjudications live in the Amendment log of
+> `research/DESIGN-SPINE.md` (A1–A14), with the full findings in `research/ADVERSARIAL-REVIEW.md`.
+> They are now reflected in the body.
+> **Applied here:** A9(i) (graph-absence claim rescoped to the seven source-inspected coding
+> agents + Copilot-by-platform-docs + Windsurf `n/e` — §2.4, §3.1), A9(ii) (Realtime/Live
+> lowering relabeled INFERENCE/HIGH — §2.12), plus the capability-negotiation consistency fix
+> (§5 gap 3 restated as four one-information-source fragments, aligning with
+> `03-HARNESS-COMPARISON.md` §2.5/E2 and spine §6).
+> **Outstanding:** none. Where this document conflicts with the Amendment log, **the amendment
+> log governs**.
 
 
 Status: derived from `research/DESIGN-SPINE.md` (pre-adversarial-review). This document is the
@@ -156,8 +163,14 @@ artifact-mediated remote pipeline (Copilot cloud: issue → ephemeral Actions VM
 orchestration format. Copilot cloud's enforcement is notable for living in credentials and
 network, not the harness: single-branch push scope, draft-PR-only, egress firewall (FACT).
 
-**What it proves.** Zero of eight contain a graph or DAG engine (SOURCE-CODE
-OBSERVATION/FACT across all eight, HIGH) — the strongest breadth evidence for spine H1.
+**What it proves.** Zero of the **seven source-inspected** systems contain a graph or DAG
+engine (SOURCE-CODE OBSERVATION, HIGH); the Copilot cloud agent shows none in its documented
+pipeline (FACT, platform docs); Windsurf/Cascade is press-level only and is **not evidenced
+either way** — matching the `n/e` Graph-support cell in `03-HARNESS-COMPARISON.md` §2.2.
+Scoped per amendment A9(i): the earlier phrasing ("zero of eight … SOURCE-CODE
+OBSERVATION/FACT across all eight") claimed source verification for two systems where none
+exists. *(Superseded label retained here because the correction is the point: the conclusion
+survives on honest labels, and it is still the strongest breadth evidence for spine H1.)*
 "Plan mode" is uniformly the same loop under a restrictive policy profile (INFERENCE, HIGH).
 Delegation converged independently five times on: fresh session + capability/policy diff +
 prompt + single result message, with optional background/resume-by-id/separate budget
@@ -412,8 +425,13 @@ lifecycle, discovery, error semantics. LCD flattening is empirically *fatal*, no
 (400s, silent capability loss, silent cost regressions). Hence: axis-typed tiered negotiation;
 a typed provider-native passthrough that is policy-visible and never silently dropped; opaque
 provenance-tagged carry-through artifacts for provider state; and both request/response *and*
-bidirectional-session invocation shapes as first-class (Realtime/Live cannot be lowered onto
-function calls) — all now spine §4 commitments.
+bidirectional-session invocation shapes as first-class — Realtime/Live cannot be lowered onto
+function calls (**INFERENCE, HIGH**, grounded in transport-level FACTs: persistent duplex
+sessions, server-initiated turns, interruption/barge-in semantics that a request/response
+function call has no place to express). Amendment A9(ii) governs the label: the spine's
+earlier FACT/HIGH was an elevation of the note's own INFERENCE/HIGH, and
+`research/METHODOLOGY.md` has no label-elevation mechanism. The conclusion is unchanged.
+All of the above are spine §4 commitments.
 
 ### 2.13 Non-AI prior art
 
@@ -481,10 +499,13 @@ research/notes/microsoft-autogen-sk-agent-framework.md). LangGraph's kernel is c
 version-vector scheduling + barrier checkpoints; edges do not exist at runtime; two
 frontends compile onto it (SOURCE-CODE OBSERVATION, HIGH — research/notes/langgraph.md).
 Claude Code reduces to four primitives with everything else as composition (INFERENCE, HIGH —
-research/notes/anthropic-claude-code-agent-sdk.md). Breadth check: zero of eight coding
-agents contain a graph engine; plan mode is uniformly a policy profile
-(research/notes/coding-agents-landscape.md). The planner as a component is dead across
-Microsoft's stack and thin-to-absent everywhere else (ADK's `BasePlanner` is a prompt shim).
+research/notes/anthropic-claude-code-agent-sdk.md). Breadth check, scoped per amendment
+A9(i): zero of the seven source-inspected coding agents contain a graph engine (SOURCE-CODE
+OBSERVATION, HIGH); the Copilot cloud agent shows none in its documented pipeline (FACT,
+platform docs); Windsurf is not evidenced either way (`n/e`). Plan mode is uniformly a policy
+profile across the inspected set (research/notes/coding-agents-landscape.md). The planner as
+a component is dead across Microsoft's stack and thin-to-absent everywhere else (ADK's
+`BasePlanner` is a prompt shim).
 
 **Interpretation.** Loop, graph, workflow, planner, supervisor, and swarm are orchestration
 strategies over a small event/commit/checkpoint substrate; none is kernel material.
@@ -492,8 +513,11 @@ strategies over a small event/commit/checkpoint substrate; none is kernel materi
 **Implication.** Spine H1 confirmed; the nine kernel objects of spine §3 start where these
 systems *arrived*. Detail in `04-ORCHESTRATION-MODELS.md` and `05-KERNEL-PRIMITIVES.md`.
 
-**Confidence.** HIGH — four independent source-verified arrivals plus an eight-system
-absence sweep.
+**Confidence.** HIGH — four independent source-verified arrivals plus a **seven-system
+source-inspected** absence sweep, corroborated by one documented-pipeline check (Copilot
+cloud, FACT) and one abstention (Windsurf, `n/e`). The four convergent arrivals carry the
+argument on their own; the absence sweep is corroboration, so the A9(i) rescoping does not
+move the confidence.
 
 ### 3.2 Capability-vocabulary convergence
 
@@ -666,7 +690,7 @@ and durable engines* — these are not features one vendor forgot but a layer no
 |---|---|---|
 | 1 | **Budgets as resource lineage** | State of the art is scalar caps: OpenAI `max_turns`; ADK `max_llm_calls=500` as the entire budget system (SOURCE-CODE OBSERVATION); Claude Code's tree-wide USD cap retrofitted in v2.1.217 with depth/concurrency as env vars; MCP has no cost/token/rate budget anywhere in the schema; A2A has no budget/deadline/priority field on tasks; Codex OSS layers expose only `max_turns` + token *reporting*; Temporal×PydanticAI silently loses child-agent usage across the activity boundary (FACT — the lineage failure in production). No system has hierarchical, attenuating, delegation-spanning budget enforcement. |
 | 2 | **Verification at the commit point** | All three durable engines: success = no exception (research/notes/durable-execution.md). ADK: rich offline eval, no inline gate (SOURCE-CODE OBSERVATION). A2A: artifact acceptance explicitly assigned to the client, out of protocol. MCP: schema validation only. What exists is in-loop feedback (OpenCode's LSP-fused edit results; PydanticAI `ModelRetry`) and out-of-loop platform gates (Copilot CodeQL/secret-scanning) — never a kernel hook gating what enters the truth plane. |
-| 3 | **Axis-typed capability negotiation for models** | `/v1/models` returns IDs, not capabilities; clients hardcode (research/notes/open-model-infrastructure.md). `extra_body` is the untyped escape hatch nothing validates. Anthropic's typed capability tree is the lone counterexample and negotiates nothing. MCP/A2A/LSP negotiate *protocol* features, not model-interaction axes. Nothing probes; nothing records outcome telemetry per capability×model pair except one product-internal service (Copilot's EditToolLearningService — SOURCE-CODE OBSERVATION). |
+| 3 | **Axis-typed capability negotiation for models** | `/v1/models` returns IDs, not capabilities; clients hardcode (research/notes/open-model-infrastructure.md). `extra_body` is the untyped escape hatch nothing validates. Anthropic's typed capability tree is the lone counterexample and negotiates nothing. MCP/A2A/LSP negotiate *protocol* features, not model-interaction axes. What exists are **four fragments, each carrying exactly one information source** — static declared dialects (Aider edit formats), declaration-with-fail-closed (Cline modality manifests), a protocol handshake (Codex App Server `initialize`), and empirical outcome telemetry (Copilot's `EditToolLearningService`) — all SOURCE-CODE OBSERVATION. None is two-sided, axis-typed, or tiered, and none combines sources; the matrix rates them BASIC in `03-HARNESS-COMPARISON.md` §2.5 for exactly that reason. "Nothing negotiates" is shorthand for "nothing negotiates on more than one information source". |
 | 4 | **Delegation attenuation and recursion control** | The convergent subagent algebra (§3.3) passes policy *diffs* by convention; no system enforces child ≤ parent as construction. Claude Code subagents inherit the parent's permission mode and certain modes cannot be tightened per-subagent (FACT). A2A has no delegation depth, loop protection, or on-behalf-of identity. smolagents' code agents can construct new agents at runtime with no attenuation answer (the note flags this as a genuine gap). Depth/concurrency caps, where they exist, are env vars, not lineage-aware grants. |
 | 5 | **Structural provenance/taint** | FIDES exists — as opt-in MAF middleware, not an invariant (SOURCE-CODE OBSERVATION). Claude Code pattern-scans subagent output text after the fact (FACT) — a retrofit acknowledging the need. MAF attributes injected context per provider; ADK carries `branch`/`isolation_scope` for visibility. Nobody propagates integrity/confidentiality labels structurally on every artifact and context element as a kernel guarantee. |
 | 6 | **Portable execution-record format** | "Durable execution has no MCP-equivalent" (research/notes/durable-execution.md): Temporal history, Restate journal, DBOS tables are open-source but mutually nonportable. OpenAI RunState is SDK-version-bound with agent definitions excluded; Codex App Server schemas drift per release (clients pin binaries); ADK's event JSON is a de facto five-SDK wire format with no governed spec; LangGraph checkpoints have a conformance suite for *storage* but no cross-runtime record standard. No journal + checkpoint schema is published as a contract anywhere. |
@@ -760,3 +784,18 @@ signal only. Where that discipline bites hardest — Cursor's role in C2 — the
 claims (per-model harness adaptation, Composer trained in-harness, reasoning-trace
 degradation) are FACTs from Cursor's own published engineering posts, retrieved indirectly
 and flagged as such in the note's ledger.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendment reconciliation against `research/DESIGN-SPINE.md` A1–A14. Edits were surgical:
+superseded *labels* were corrected in place and the superseded wording is quoted where the
+correction is itself the finding. No conclusion in this document changed.
+
+| Amendment | Change |
+|---|---|
+| **A9(i)** | §2.4 *What it proves*: "Zero of eight … (SOURCE-CODE OBSERVATION/FACT across all eight, HIGH)" replaced by the scoped triple — zero of the **seven source-inspected** systems (SCO/HIGH), Copilot cloud agent shows none in its **documented pipeline** (FACT, platform docs), Windsurf/Cascade **not evidenced either way** (`n/e`). §3.1 *Evidence*: breadth check restated on the same triple. §3.1 *Confidence*: "eight-system absence sweep" → seven-system source-inspected sweep plus one documented-pipeline check and one abstention, with a note that the four convergent arrivals, not the sweep, carry H1. All three now agree with the `n/e` Graph-support cell in `03-HARNESS-COMPARISON.md` §2.2 and with `04-ORCHESTRATION-MODELS.md` §2.A/§4.1. §1 discipline point 1 already said "seven of eight coding agents" and needed no change — the inconsistency was between §1 and §2.4/§3.1 of this same document. |
+| **A9(ii)** | §2.12 *What it proves*: "Realtime/Live cannot be lowered onto function calls" now carries **INFERENCE/HIGH** with its grounding transport FACTs named (persistent duplex sessions, server-initiated turns, interruption/barge-in), and states that the spine's earlier FACT/HIGH was an elevation `research/METHODOLOGY.md` provides no mechanism for. Conclusion and the two-invocation-shapes commitment unchanged. |
+| **Consistency (gap map ↔ matrix)** | §5 gap 3: "nothing probes / nothing negotiates" restated as **four fragments, each carrying exactly one information source** (Aider declared dialects, Cline declaration-fail-closed, Codex App Server handshake, Copilot `EditToolLearningService` telemetry), which is what doc 03's four BASIC negotiation cells rate. Removes the apparent contradiction between spine §6's "nothing negotiates today" and doc 03 §2.5. |
+| **A1–A8, A10–A14** | No occurrence in this document. It is an evidence synthesis of external systems; it states no Kyxo mechanism that those amendments changed. The mechanism-bearing text lives in docs 05–14 and the ADRs. |

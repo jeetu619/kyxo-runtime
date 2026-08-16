@@ -1,9 +1,16 @@
 # 10 — Harness and Graph Runtime
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1, A4, A10, A13. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document predates the adversarial review; the
+> review's binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14),
+> with the full findings in `research/ADVERSARIAL-REVIEW.md`. Since phase 2 the **executable
+> semantics** in `prototypes/kernel-semantics/` — normative prose in `docs/17-KERNEL-SEMANTICS.md`
+> and `docs/18-KERNEL-INVARIANTS.md` — supersede prose wherever the two disagree.
+> **Applied here:** A1 (§5.2, §5.4, §5.4.1, §5.5, §6), A2 (§1.2, §2.3), A4 (§1.3, §1.3a, §1.4),
+> A10 (§1.2, §2.4, §3.2, §3.4, §5.3, §5.4, §5.5, §7.2), A13 (§2.3, §4.2, §4.3, §5.2), with A3,
+> A8, A11, A12 and A14 aligned incidentally where they touch this document's surfaces — see the
+> Revision record at the foot of this document. **Outstanding:** none known.
+> Where this document conflicts with the Amendment log or the executable semantics, **those
+> govern**.
 
 
 Status: DRAFT for adversarial review. Written from `research/DESIGN-SPINE.md` (binding) under
@@ -80,8 +87,8 @@ callbacks. The split of responsibilities:
 | Event intake | Delivers user input, tool observations, external events, suspension resolutions into the cell as journal-ordered events | Codex SQ/EQ; ADK event loop (both notes) |
 | Checkpoint-at-yield | Every callback return is a yield-is-commit point: effects in the returned decision are journaled atomically before the behaviour resumes | ADK's one contract that survived the 1.x→2.x rewrite intact (research/notes/google-adk.md, SOURCE-CODE OBSERVATION/HIGH) |
 | Budget charging | Grant reserve-at-lease / settle-at-outcome (amendment A2), tree-wide; refusal-to-spawn and child-stop on exhaustion | Claude Code `maxBudgetUsd` tree enforcement pattern, retrofitted there, native here (research/notes/anthropic-claude-code-agent-sdk.md) |
-| Cancellation | Propagated between callbacks at commit points; a behaviour never needs cancellation logic | Codex `Op::Interrupt`; LangGraph `request_drain()` |
-| Typed suspension | `approval-required` / `input-required` / `auth-required` invocation states with typed payloads, persisted in checkpoints | MAF request-info ports stored inside checkpoints; OpenAI `NextStepInterruption` + RunState (both notes) |
+| Cancellation | Propagated between callbacks at commit points; a behaviour never needs cancellation logic. The *request* is journaled when it is made, not only when it is honoured (amendment A10), so an operator interrupt racing a completion leaves a trace | Codex `Op::Interrupt`; LangGraph `request_drain()` |
+| Typed suspension | `approval-required` / `input-required` / `auth-required` invocation states with typed payloads, persisted in checkpoints; every suspension record carries an `origin` discriminator — `provider` \| `policy` \| `kernel` — because the three resume differently (amendment A10) | MAF request-info ports stored inside checkpoints; OpenAI `NextStepInterruption` + RunState (both notes) |
 | Loop accounting | Iteration counters, progress hashes, failure streaks — computed by the driver, handed to policy (§3) | Gemini CLI LoopDetectionService; Roo mistake counters (research/notes/coding-agents-landscape.md) |
 
 **The harness supplies (callbacks — the judgment):** context compilation, action choice,
@@ -94,30 +101,50 @@ OUR PROPOSAL — the V1 TypeScript behaviour contract. Types referenced from doc
 
 ```typescript
 /**
- * Everything a harness callback may touch. Kernel verbs are pre-bound to the
- * cell's Grant; there is no ambient authority. The behaviour cannot reach
- * around this surface: every effect is an Invocation, every persisted fact a
- * journal Event, every payload an Artifact reference.
+ * `HarnessCtx` is NOT a bespoke surface. It is a typed extension of `KernelApi`
+ * — the Wave-0 frozen, versioned, conformance-tested facade (amendment A4; the
+ * normative verb list is doc 06 §8a.1, restated in doc 05 §3.3 and doc 07) —
+ * narrowed to one cell and one Grant handle and widened only by loop-specific
+ * *views*, never by new verbs. There is no ambient authority. The behaviour
+ * cannot reach around this surface: every effect is an Invocation, every
+ * persisted fact a journal Event, every payload an Artifact reference.
  */
-interface HarnessCtx {
+interface HarnessCtx extends KernelApi {
+  // Inherited, unchanged, from the frozen facade: bind, invoke, resume (with the
+  // re-grant option), cancel, attenuate, getGrant, charge, storeArtifact /
+  // readArtifact, scoped journal read, checkpoint, createCell, listCapabilities,
+  // the Kind verbs (registerKind / createKindObject / getKindObject / watch), and
+  // the injected clock. Adding a verb is a protocol revision, not a minor release.
+
   readonly cell: CellRef;                       // single-writer scope this run occupies
   readonly objective: ArtifactRef<Objective>;   // the Kind instance being pursued
-  readonly grant: GrantView;                    // rights + remaining budgets (read-only)
+  readonly grant: GrantHandle;                  // unforgeable handle, not a string (A8):
+                                                // getGrant() reports rights + remaining
+                                                // state; the journal's grant reference is
+                                                // a NON-resolvable identifier
   readonly bindings: BindingSet;                // sealed negotiation results, incl. the
-                                                // model adapter binding and its
+                                                // model adapter binding, its per-property
+                                                // guarantee grades (A3), and its
                                                 // model-behavior profile (§2.4)
-  readonly journal: JournalView;                // typed read/query over this cell's events
+  readonly journal: JournalView;                // scoped read/query over this cell's lineage
   readonly policy: LoopPolicyView;              // the declarative controls of §3.2
+  readonly now: () => LogicalTime;              // injected clock — a strategy that reads a
+                                                // wall clock is one whose replay diverges
 
   /** The only effect verb. Async-first; returns a handle whose lifecycle is the
-   *  kernel invocation state machine. Identity is deterministic (§5.2). */
+   *  kernel invocation state machine. Effect identity is content-inclusive and
+   *  lineage-scoped (§5.2, amendment A1). */
   invoke(req: InvocationRequest): InvocationHandle;
 
-  /** Append a typed harness event to the journal (charged, ordered, committed). */
+  /** Append a typed harness event to the journal (ordered; committed atomically at
+   *  the next yield-is-commit point). Metered usage settles against the invocation's
+   *  reservation — reserve at lease, settle at outcome, release the remainder (A2). */
   emit(evt: HarnessEvent): void;
 
   /** Block on an external decision (human, guardian capability, parent cell).
-   *  Checkpoints underneath; survives process death. */
+   *  Checkpoints underneath; survives process death. The record carries an `origin`
+   *  discriminator — provider | policy | kernel — and resume semantics differ per
+   *  origin (A10); a kernel-origin (budget) suspension resumes with a re-grant. */
   suspend<T>(s: TypedSuspension<T>): Promise<T>;
 }
 
@@ -159,7 +186,9 @@ interface HarnessBehaviour<S> {
   verify?(ctx: HarnessCtx, state: S, candidate: ArtifactRef): Promise<EvidenceRef[]>;
 
   /** Optional: map a failure record to a recovery decision. Absent, the cell's
-   *  supervision policy applies directly (doc 13). */
+   *  supervision policy applies directly (doc 08 §7; normatively doc 17 §6 for
+   *  effect-class triage and doc 19 for the crash matrix — NOT doc 13, which is
+   *  the future-scenario test). */
   recover?(ctx: HarnessCtx, state: S, failure: FailureRecord): Promise<RecoveryDecision>;
 }
 
@@ -191,6 +220,58 @@ type ContinuationDecision =
   follows from that uniformity, not from special mechanisms.
 - Confidence — HIGH.
 
+### 1.3a The facade is frozen — and delegation needs no handle at all
+
+**Frozen, not merely documented (amendment A4).** `KernelApi` / `HarnessCtx` / `InvokeCtx` are
+a Wave-0 frozen, versioned, conformance-tested contract *alongside* the wire schemas, not an
+SDK convenience that can be widened when a strategy wants one more verb. Hence the shape of
+§1.3: `HarnessCtx` is **defined as a typed extension of `KernelApi`**, so there is exactly one
+verb list in the system and this document does not get to invent a second one. The price is
+accepted deliberately — adding a verb after Wave 0 is a protocol revision with conformance
+fixtures — and the benefit is that ADR-010's replaceability claim (swap the TypeScript kernel
+for a Rust one with no userland change) stops being scoped to the execution record alone once
+the facade fixtures exist.
+
+**Delegation needs no kernel handle at all.** This is an executable finding, not a
+restatement: the phase-1 design handed a composite capability a small `ctx.kernel` facade so it
+could invoke children, on the reasoning that a *small* handle is a safe handle. The
+kernel-semantics prototype removed the handle entirely
+(`prototypes/kernel-semantics/src/types.ts`, `kernel.ts`). A capability receives `InvokeCtx`,
+which is **data only** — ids, an injected clock value, the request, an optional resume payload,
+a cancellation predicate — and *proposes* delegation:
+
+```typescript
+// Inside a capability: no kernel object is in scope. The generator channel is the
+// entire interface to the kernel, in both directions.
+const outcome: DelegationOutcome =
+  yield { type: 'delegate', capabilityId: 'reviewer@2', request, step: 'review' };
+```
+
+The kernel resolves the proposal, mints the child's authority by **attenuating from the
+parent's current remaining budget**, runs the child in a **fresh cell** (A10), and returns the
+`DelegationOutcome` into the generator. Four consequences bind this document:
+
+1. **A harness invoked as a capability holds nothing.** §1.4 makes harnesses capabilities;
+   when one runs in that position its `{ kind: "delegate" }` continuation lowers to a delegate
+   proposal. `AttenuationSpec` is therefore a *request*, and the kernel's attenuation is what
+   binds — a capability cannot widen a grant by delegating (invariants I5, I18).
+2. **The driver holds the facade; the behaviour does not hold the kernel.** The two halves of
+   the facade are deliberately different shapes — verbs above the callback line (stdlib driver,
+   `HarnessCtx`), data-in / proposals-out below it (capability, `InvokeCtx`). §3.4's claim that
+   a harness cannot run an invisible inner loop rests on this asymmetry, not on good manners.
+3. **Refused delegation is journaled, not silent.** An attenuation that cannot be satisfied, or
+   a spawn-depth ceiling hit, commits `policy.denied` and returns a failed outcome (invariant
+   I22). The prototype's first implementation computed the child budget from a *captured*
+   parent state that predated the parent's own reservation, overshooting the true remaining;
+   the correction — read authority fresh at every hop — is recorded as doc 20 F-3.
+4. **`ActResult` and `ContinuationDecision` stay a closed union** precisely because they are
+   lowered onto proposals: a decision vocabulary the kernel cannot enumerate is a decision
+   vocabulary it cannot validate before commit.
+
+*(Retained for the record: the phase-1 "small handle" reasoning was ocap-correct about
+authority and wrong about the commit barrier — any callable handle makes the barrier
+cooperative rather than structural. Doc 06 §8 change #9 carries the full autopsy.)*
+
 ### 1.4 Harnesses are capabilities
 
 OUR PROPOSAL, mandated by spine §2/§3. A `HarnessBehaviour` ships with a versioned manifest
@@ -198,7 +279,8 @@ and enters the same registry as tools and model adapters. Consequences, each doi
 
 1. **Invocable.** `runtime.run({objective})` resolves the default profile's harness by
    negotiation like any capability; a graph node can require a harness (§5); a harness can
-   delegate to a different harness under an attenuated Grant.
+   delegate to a different harness under an attenuated Grant — by *proposing* the delegation
+   when it is itself running as a capability, never by holding a kernel handle (§1.3a).
 2. **Versioned.** Harness identity is `name@semver + behaviour-hash`; events pin it
    (version-by-data, spine §7), so a journal entry always names exactly which harness logic
    produced it, and fork-from-checkpoint across harness versions is a first-class repair verb.
@@ -214,14 +296,15 @@ and enters the same registry as tools and model adapters. Consequences, each doi
 flowchart TB
   subgraph CELL["Cell (single-writer, journaled)"]
     direction TB
-    DRV["Generic loop driver (stdlib)\nevent intake · checkpoint-at-yield · budget charge\ncancellation · typed suspension · loop accounting"]
+    DRV["Generic loop driver (stdlib) — holds the frozen KernelApi facade\nevent intake · checkpoint-at-yield\nreserve-at-lease / settle-at-outcome · cancellation (requests journaled)\ntyped suspension (origin: provider | policy | kernel) · loop accounting"]
     HB["HarnessBehaviour callbacks (capability)\ncompileContext → act → integrateObservation\n→ decideContinuation → verify / recover"]
-    DRV -- "callbacks with HarnessCtx" --> HB
-    HB -- "ContinuationDecision" --> DRV
+    DRV -- "callbacks with HarnessCtx = KernelApi + loop views" --> HB
+    HB -- "ContinuationDecision (closed union)" --> DRV
   end
-  DRV -- "Invocations (deterministic identity)" --> K["Kernel: Binding · Grant · Policy pipeline"]
+  DRV -- "Invocations (content-inclusive, lineage-scoped effect identity)" --> K["Kernel: Binding · Grant · Policy pipeline"]
   DRV -- "Events (truth plane)" --> J[("Journal + Checkpoints")]
   K --> CAPS["Capabilities: model adapters · tools ·\nverifiers · child harnesses · humans"]
+  CAPS -. "delegate PROPOSAL — no kernel handle;\nkernel attenuates from remaining budget,\nchild runs in a fresh cell, outcome returns\nthrough the generator channel (§1.3a)" .-> K
 ```
 
 ---
@@ -279,6 +362,11 @@ falls out of §1.4 with almost no new machinery:
    an orchestration strategy in a cell) enumerates `harness × model-adapter` pairs, discarding
    pairs whose bind-time negotiation fails (a required profile axis missing). Declarations
    gate *eligibility* (spine C3) — an ineligible pair is a recorded fact, not a zero score.
+   **Eligibility is not selection** (amendment A13): among eligible candidates, choosing is a
+   routing strategy with the contract `rank(candidates, telemetry, policy) → choice +
+   journaled rationale`. The benchmark runner pins `rank` to *enumerate-all* precisely so that
+   measurement does not silently inherit the router's bias — which is the failure mode of
+   measuring a fleet through its own production router.
 2. **Corpus.** A versioned corpus of Objective artifacts (a Kind), each carrying acceptance
    criteria as required Evidence types (tests pass, artifact schema-valid, judge rubric ≥
    threshold). The corpus is content-addressed; a benchmark result cites corpus version,
@@ -292,15 +380,23 @@ falls out of §1.4 with almost no new machinery:
    applied is pinned in the run record.
 4. **Paired metrics from the journal.** Every metric is a projection of the truth plane — no
    separate instrumentation. The Phase-37 metric set, all derivable from kernel objects:
-   verified success rate (Evidence gates passed), cost-per-success (Grant decrements: tokens,
-   USD), wall-clock and invocation latency distributions, iterations to termination,
+   verified success rate (Evidence gates passed), cost-per-success (Grant **settlements**:
+   tokens, USD — reserved at lease, settled at outcome, remainder released, amendment A2, so
+   abandoned and failed attempts are counted rather than vanishing at the commit point),
+   wall-clock and invocation latency distributions, iterations to termination,
    termination cause histogram (§3.3), stagnation and repeated-failure events, escalations
    (model-ladder and human), recovery success after injected faults (doc 13's scenario set),
    delegation depth/width, compiled-context sizes, and plan-mutation counts for graph
    strategies (§5.4).
 5. **Telemetry feedback.** Results write into the pair's capability record as outcome
-   telemetry. Routing consumes it: telemetry drives *selection* among eligible pairs (spine
-   C3). This closes the loop that Copilot's EditToolLearningService implements locally
+   telemetry, in the schema the selection contract consumes. Routing consumes it: telemetry is
+   the `telemetry` argument of `rank(candidates, telemetry, policy)` (amendment A13), and the
+   chosen candidate's **rationale is journaled** — a benchmark can therefore be replayed
+   against the routing decisions it later informs. V1's default `rank` is deliberately dumb:
+   declared preference order plus probe freshness. Telemetry-driven ranking is Wave-3 scope
+   with its schema frozen now, so the feedback loop is wired before it is closed rather than
+   retrofitted onto a shipped router. This closes the loop that Copilot's
+   EditToolLearningService implements locally
    (SOURCE-CODE OBSERVATION/HIGH) — Kyxo makes the same measure-and-adapt cycle a substrate
    feature spanning all capabilities, not one hard-coded edit-tool service.
 
@@ -328,7 +424,13 @@ falls out of §1.4 with almost no new machinery:
   `editDialects` (ranked, telemetry-updated), `toolNamingStyle` (e.g. shell-like), `parallelToolSafety`, `promptPatches`
   (keyed by model version, provenance-labeled), `effortSemantics`. Declared values are the
   adapter author's claims; probe results and outcome telemetry overlay them (spine C3's three
-  information sources).
+  information sources), and only the probe-backed ones may carry an enforcement badge (A14).
+  Every ranked or tiered field here — `editDialects`, `effortSemantics`, `reasoningCarry` —
+  **carries its own ordered ladder as manifest data** (amendment A10). The kernel compares and
+  gates ladder positions for an axis whose meaning it has never been taught; it does not know
+  what an edit dialect *is*. The failure mode this forecloses is the one the prototype
+  produced: a ladder hard-coded in kernel source, which quietly makes every new tier a kernel
+  release (invariant I1).
 - Confidence — HIGH on the need; MEDIUM on the exact V1 field set (the axes are extracted
   from four independent systems, but no prior art validates this particular schema).
 
@@ -364,8 +466,13 @@ OUR PROPOSAL — the `LoopPolicy` schema (a Kind; validated, versioned, hash-pin
 ```typescript
 interface LoopPolicy {
   maxIterations?: number;              // hard cap on turn cycles
-  budget?: BudgetSliceSpec;            // attenuated slice of the cell's Grant:
-                                       // tokens, USD, invocations, spawn depth/width
+  budget?: BudgetSliceSpec;            // attenuated child of the cell's Grant: tokens, USD,
+                                       // invocations, spawn depth/width. "Slice" is a
+                                       // historical name and slightly misleading — the limits
+                                       // are CEILINGS checked along the whole chain at
+                                       // admission, not a partition set aside for this loop
+                                       // (doc 17 §9a). Siblings may overcommit; chain
+                                       // admission still bounds collective spend.
   deadline?: DurationSpec;             // wall-clock; driver-enforced (absent in Claude
                                        // Code — a documented gap we close)
   stagnation?: {
@@ -379,8 +486,9 @@ interface LoopPolicy {
     matcher?: FailureClassSpec;        // which failure classes count
     action: PolicyAction;
   };
-  escalationLadder?: {                 // model escalation as data
-    rungs: CapabilityRequirement[];    // e.g. fast model -> frontier model
+  escalationLadder?: {                 // model escalation as data — the ordered ladder is
+    rungs: CapabilityRequirement[];    // policy/manifest DATA, never kernel knowledge (A10);
+                                       // e.g. fast model -> frontier model
     triggers: EscalationTrigger[];     // stagnation | repeated-failure | verify-failed
     maxRungs: number;
   };
@@ -422,7 +530,7 @@ Every observed variant becomes a `TerminationPolicy` provider — none is hard-c
 | `no-pending-tools` | model response with zero tool calls ⇒ done | Claude Code, OpenAI Agents SDK (FACT/SOURCE-CODE OBSERVATION) |
 | `completion-tool` | explicit `finish`-class tool call required | Cline `submit_and_exit`, ADK task-mode `finish_task` (SOURCE-CODE OBSERVATION) |
 | `next-speaker-check` | cheap structured side-model call adjudicates continue/stop | Gemini CLI (SOURCE-CODE OBSERVATION) |
-| `judge-verdict` | second model returns structured done/more verdict | MAF `with_judge` (SOURCE-CODE OBSERVATION) |
+| `judge-verdict` | second model returns structured done/more verdict. Where that verdict gates an effect (finalization behind a commit gate, promotion of a candidate), it is **always journaled with an input hash** regardless of policy profile — amendment A12 | MAF `with_judge` (SOURCE-CODE OBSERVATION) |
 | `todos-remaining` | open items in a plan/todo state cell ⇒ continue | MAF, Roo (SOURCE-CODE OBSERVATION) |
 | `mistake-budget` | consecutive-failure count exceeds cap ⇒ stop/escalate | Roo (SOURCE-CODE OBSERVATION) |
 | `evidence-satisfied` | objective's required Evidence artifacts all present and gate-passed | none — OUR PROPOSAL, enabled by the doc-08 commit gate |
@@ -437,9 +545,13 @@ OUR PROPOSAL, enforced by construction: the driver emits typed events for every 
 `loop.iteration-started`, `loop.context-compiled` (with source provenance and token
 accounting), `loop.acted` (invocation refs), `loop.observation-integrated`,
 `loop.continuation-decided` (the decision **and the signals that produced it**),
-`loop.policy-triggered` (which rule, which threshold). Since callbacks can only act through
-`HarnessCtx`, a harness *cannot* run an invisible inner loop: every model call and tool call
-is an Invocation on the journal. This is the direct negation of the two opaque poles — Claude
+`loop.policy-triggered` (which rule, which threshold). Cancellation *requests* are journaled
+at the moment they are issued rather than only when they are honoured (amendment A10), so an
+operator interrupt that loses a race with a completing invocation still leaves its intent in
+the record. Since callbacks can only act through `HarnessCtx` — and a harness running as a
+capability holds no kernel object at all, only the proposal channel (§1.3a) — a harness
+*cannot* run an invisible inner loop: every model call and tool call is an Invocation on the
+journal. This is the direct negation of the two opaque poles — Claude
 Code's closed binary and Cursor's server-side loop (FACT: even Cursor's own hooks expose only
 sanctioned taps; the loop interior is unobservable) — and it is what makes §2.3's metrics
 projections and doc 13's supervision possible. Live observation streams remain the advisory
@@ -495,9 +607,26 @@ interface PlanStep {
                                          // binding, NEVER an endpoint, NEVER code
   inputs: InputMapping;                  // state cells / artifacts consumed
   acceptance: EvidenceRequirement[];     // what Evidence must exist to call it done
-  budgetHint?: BudgetEstimate;           // advisory; the Grant is not the plan's to give
+  budgetHint?: BudgetEstimate;           // advisory; sourced from the selection contract's
+                                         // telemetry (A13), never invented — and the Grant
+                                         // is not the plan's to give
 }
 ```
+
+**Cost estimates come from the selection contract, not from the planner's imagination
+(amendment A13).** `budgetHint` is not a number a planner model produces from vibes. It is
+read from the same outcome-telemetry stream the selection contract consumes:
+`rank(candidates, telemetry, policy) → choice + journaled rationale`. Bind-time negotiation
+decides which capabilities are *eligible* for a step; the routing strategy that later picks
+among them reads the identical stream, so a plan's cost estimate and the router's eventual
+choice cannot silently disagree about what the step costs. Two honest qualifications. First,
+V1's default `rank` is declared preference order plus probe freshness, so V1 hints are
+**`declared`-grade** (A3) until a step class has settlement history — and a hint with no
+telemetry behind it must be labeled as such, so that policy can refuse to admit a plan whose
+consequential steps are costed by assertion. Second, the settlements the hints are built from
+are reserve/settle records (A2), which means failed and abandoned attempts are in the history
+— an estimator trained only on successes systematically under-prices exactly the steps that
+tend to fail.
 
 **Plan = data, never code with authority.** Three enforcement rules: a Plan carries no Grant
 and cannot be granted to; a `PlanStep.requires` is resolved to a Binding only by the
@@ -520,10 +649,13 @@ out), differing only in manifest axes and telemetry:
 | Hierarchical | decompose objective → sub-objectives recursively; emits nested Plans; sub-plans producible lazily | Roo orchestrator prompt pattern; Magentic-One orchestrator-as-library (SOURCE-CODE OBSERVATION) | medium; bounded by decomposition depth |
 | LLM single-shot | one strong-model call drafts the full Plan; cheap to re-run on mutation triggers | Cursor Plan Mode, Copilot cloud plan phase (FACT) | one frontier call per version |
 | Symbolic/constraint | deterministic solver over typed step libraries (build graphs, migration orderings); no model call | no direct agent-stack prior art — classical planning imported; flagged as such (INFERENCE/MEDIUM that demand exists, e.g. release/migration pipelines) | cheap, complete, narrow domain |
-| Cost-aware | wraps any of the above; optimizes step assignment over capability outcome telemetry and remaining budget (which pair for which step class) | Cursor Router's cost/quality routing modes (FACT) generalized | adds a scoring pass |
+| Cost-aware | wraps any of the above; optimizes step assignment over capability outcome telemetry and remaining budget (which pair for which step class). It is a **consumer of the A13 selection contract, not a second routing mechanism**: it calls the same `rank(candidates, telemetry, policy)` and its choices carry the same journaled rationale | Cursor Router's cost/quality routing modes (FACT) generalized | adds a scoring pass |
 
 Because planners are capabilities, they are benchmarkable with the §2.3 matrix (planner ×
-executor-strategy × model), and selectable by routing telemetry like everything else.
+executor-strategy × model), and selectable through the same two-step contract as everything
+else (amendment A13): bind-time negotiation gates eligibility, `rank` chooses among the
+eligible, and the rationale lands in the journal so "why this planner" is answerable after the
+fact.
 
 ---
 
@@ -600,8 +732,13 @@ interface JoinSpec {
 Design decisions and their evidence:
 
 - **Nodes are capability requirement expressions, not hardcoded bindings.** The graph says
-  *what kind of worker* each step needs; negotiation at execution time chooses the provider
-  under current telemetry and budget. This is what makes one graph artifact portable across
+  *what kind of worker* each step needs; negotiation at execution time gates which providers
+  are **eligible**, and a routing strategy then **selects** among them under current telemetry
+  and budget — two steps with two contracts, not one blurred act (amendment A13:
+  `rank(candidates, telemetry, policy) → choice + journaled rationale`). The rationale is
+  committed beside the node's invocation, so a graph run can answer "why this provider for
+  this node, on this attempt" without re-deriving it. This is what makes one graph artifact
+  portable across
   harness×model pairs and what makes the §2.3 matrix runnable over graph strategies. The
   anti-pattern is MAF's serialized edges installing "loud-failing proxies" when a named
   callable is missing after deserialization (SOURCE-CODE OBSERVATION) — identity-by-code-
@@ -613,14 +750,25 @@ Design decisions and their evidence:
   on a Kind-typed state cell; the graph runner merely watches for barrier satisfaction. Write
   ordering into reducers is deterministic (sorted by invocation identity), copying
   LangGraph's sort-by-task-path rule.
-- **Compile-to-invocations with deterministic identity.** Each ready node occurrence becomes
-  an Invocation with identity `uuid5(cellId, graphArtifactHash, version, nodeId,
-  occurrenceIndex, dynamicPath)`. Evidence this is the linchpin: LangGraph derives task IDs
+- **Compile-to-invocations with content-inclusive, lineage-scoped identity.** Each ready node
+  occurrence becomes an Invocation whose **step identity** is `uuid5(cellId,
+  graphArtifactHash, version, nodeId, occurrenceIndex, dynamicPath)` and whose **effect key**
+  is derived from `(capability, step identity, hash of the request)` — the args hash is
+  mandatory, the position optional (amendment A1). Using the positional tuple *as* the effect
+  key is retired: a call site whose arguments changed under an unchanged position would
+  otherwise inherit a stale outcome as a silent cache hit, which is a data-corruption bug
+  wearing a performance optimization's clothes. Effect identity is additionally
+  **lineage-scoped**: a fork inherits index entries at or before the cut, each marked
+  `inherited`, and an inherited `external-irreversible` or `external-compensatable` effect
+  **refuses loudly** rather than returning as a hit (doc 17 §8.2; invariants I13, I24; the
+  falsifying case is doc 20 F-1). Evidence this is the linchpin: LangGraph derives task IDs
   `uuid5/xxhash over (checkpoint_id, ns, step, node, path)` and hangs resume, memoization,
   and error-handler routing off them; MAF validates checkpoint compatibility with a
-  `graph_signature_hash` (both SOURCE-CODE OBSERVATION/HIGH). Deterministic identity is what
-  lets a resumed or mutated graph *not* re-execute completed side effects — the kernel's
-  memoized-resume contract (spine §5 "dynamic dispatch," doc 08).
+  `graph_signature_hash` (both SOURCE-CODE OBSERVATION/HIGH). Stable identity is what lets a
+  resumed or mutated graph *not* re-execute completed side effects — served by the
+  **content-keyed replay cache**, which is a different mechanism with a different lifetime
+  from the bounded reliability dedup window (amendment A11; only the window belongs in the
+  checkpoint).
 - **Dynamic fan-out is native, not an escape hatch.** LangGraph accreted `Send`, `Command`,
   and mid-step `accept_push` as backdoors from static topology; ADK added `ctx.run_node`
   (both SOURCE-CODE OBSERVATION/HIGH; both notes conclude "dynamic dispatch always wins").
@@ -637,7 +785,11 @@ invocations in the cell; the kernel scheduler owns actual concurrency and leases
 `integrateObservation` = fold node completions into state cells through reducers;
 `decideContinuation` = `continue` while nodes are pending/ready, `finalize` when terminal
 outputs exist, `suspend` when a node's invocation enters `approval-required`/`input-required`
-(MAF's request-info-port pattern generalized — the suspension is typed and checkpointed),
+(MAF's request-info-port pattern generalized — the suspension is typed and checkpointed, and
+carries an `origin` discriminator, `provider | policy | kernel`, because the three resume
+differently: a provider-origin suspension re-enters the provider, a policy-origin one waits
+for the policy condition to clear, and a kernel-origin one — budget exhaustion — resumes only
+with a re-grant; amendment A10),
 policy actions per §3.2 otherwise. Loop policy applies to graph runs unchanged: a graph cell
 has iteration caps (supersteps), budget, deadline, stagnation detection over its state cells.
 
@@ -667,7 +819,9 @@ flowchart LR
   X -- "budget pressure signal" --> M
   M["Mutation request\n(typed, journaled)"] --> P2["Plan vN+1\n(planner re-invoked\nwith trigger + journal view)"]
   P2 --> G2["Graph vN+1"]
-  G2 -- "rebase: identity-stable nodes continue,\nremoved cancelled, new scheduled" --> X
+  G2 --> D{"Any pending invocation at the cut?\nEXPLICIT journaled disposition required —\nadopt · re-lease · compensate · abandon\n(A1: there is no default, §5.4.1)"}
+  D -- "rebase in lineage:\nunchanged effect keys continue untouched,\nremoved nodes cancelled (request journaled),\nnew nodes scheduled" --> X
+  D -- "fork: NEW lineage; effect index inherited\nat the cut only, entries marked inherited;\nparent's post-cut effects invisible" --> X2["Graph-runner cell\n(child lineage, parent unaffected)"]
 ```
 
 Mutation triggers, each a typed journal event: **verification failure** (a node's Evidence
@@ -677,9 +831,10 @@ or retry differently), **evidence arrival** (new information invalidates a Plan 
 depletion crosses a declared threshold; the cost-aware planner can re-plan onto cheaper
 pairs or prune optional branches). The mutation itself is: re-invoke a planner capability
 with the trigger and the current journal view; it emits Plan vN+1; compilation emits Graph
-vN+1; the runner **rebases** — invocations whose deterministic identity is unchanged between
-versions continue untouched (their identity tuple contains nodeId + inputs-hash, not graph
-version, for exactly this reason); removed nodes are cancelled through normal cancellation;
+vN+1; the runner **rebases** — invocations whose *effect key* is unchanged between versions
+continue untouched (the key contains nodeId + args hash, not graph version, for exactly this
+reason — §5.2); removed nodes are cancelled through normal cancellation, with the cancellation
+**request** journaled when it is issued rather than only when it is honoured (amendment A10);
 new nodes schedule normally.
 
 **Provenance of mutations** is non-optional: `PlanProvenance` on each version records the
@@ -688,17 +843,61 @@ journal answers "why did the plan change, who changed it, what did it believe at
 No studied system versions its plans at all (the closest are Cursor's human-editable plan and
 Roo's mutable todo list, both un-provenanced — FACT/SOURCE-CODE OBSERVATION); this is
 genuine differentiation enabled by Kinds + Artifacts, not repackaging. INFERENCE (MEDIUM):
-plan mutation mid-flight is the least production-validated mechanism in this document; the
-rebase rules need prototype validation (task 4) and a doc-08 treatment of
-mutation-during-pending-join.
+plan mutation mid-flight remains the least production-validated mechanism in this document,
+and the rebase rules still need prototype validation at graph altitude. The specific hole this
+paragraph used to defer — mutation while a join is only partially satisfied — is **no longer
+deferred**: it is answered by §5.4.1 below under amendment A1 and by doc 17 §8.2, rather than
+being left to a future doc-08 treatment.
+
+#### 5.4.1 Mutation while a join is partially satisfied (amendment A1)
+
+A join barrier is satisfied when its named writers have written (§5.2), so mutation can arrive
+with some writers complete and others still in flight. The phase-1 draft left this open. It is
+now closed, and the closing insight is deflationary: **a partially-satisfied join is just a set
+of pending invocations, and pending invocations are never dispositioned by default.**
+
+1. **Effect identity is lineage-scoped.** A rebase that stays in the same lineage keeps the
+   effect index, so a writer that already landed is not re-run. A mutation applied by
+   *forking* the graph cell — the normal move when the old and new plans must both survive —
+   creates a new lineage whose index holds only entries at or before the cut, each marked
+   `inherited`. The parent's post-cut writes are invisible to the child, and that is correct
+   rather than lossy: the child may legitimately need to do that work itself, and must never
+   be told it already happened.
+2. **Every pending writer needs an explicit, journaled disposition.** Forking with an
+   unaddressed in-flight join writer **fails loudly**. The four dispositions are `adopt` (the
+   write landed in the world; treat the writer as satisfied and add it to the protected set),
+   `re-lease` (re-execute — permitted only for safe effect classes, or under an explicit
+   override carrying a reason, journaled in the fork event), `compensate` (run the declared
+   compensation and treat the writer as unsatisfied), and `abandon` (drop the writer and let
+   the barrier fail or fall back to its `predicate` form). Silence about an unknown external
+   outcome is precisely the bug this rule exists to prevent.
+3. **Compensation is the normative repair for irreversible writers.** A writer whose declared
+   effect class is `external-irreversible` cannot be re-leased into the new plan. If the
+   mutation invalidates its contribution, the repair is a compensating invocation recorded in
+   the journal — forward motion, not a rewind (doc 13 scenario E, promoted to normative by
+   A1; doc 17 §5).
+
+The reducer sees all of this as ordinary data, not as a special case: `adopt` writes the landed
+value through the reducer under the writer's original identity, `abandon` removes the writer
+from the barrier's `awaiting` set in the new version, and a `count`-form barrier's target is
+recomputed from the dispositions rather than inherited. What the runner may **not** do is
+quietly carry a partially-satisfied barrier across a mutation and trust that the arithmetic
+still holds — that was the phase-1 reading, and it is the reason this subsection exists. A
+world-effect divergence between the parent and child lineages is a first-class, documented
+state here, not an anomaly to be reconciled automatically; merge is not supported, and
+reconciliation, where wanted, is ordinary work performed by a strategy in a third lineage.
 
 ### 5.5 Nested and recursive graphs under grant attenuation
 
 A `GraphNode.requires` may resolve to a capability that is itself an orchestrator — another
-graph strategy, a loop harness, a remote runtime. The child runs in its own cell under an
+graph strategy, a loop harness, a remote runtime. The child runs in a **fresh** cell under an
 attenuated Grant (child ≤ parent: rights and quantitative budget, including spawn
-depth/width — spine §3, object 7), making recursion structurally bounded: a graph that
-spawns graphs exhausts spawn-depth budget, not the operator's patience. Parent interposition
+depth/width — spine §3, object 7). Fresh is normative, not incidental (amendment A10): a child
+never re-enters its parent's single-writer scope, so the reentrancy deadlock is designed away
+rather than documented around. Recursion is structurally bounded: a graph that spawns graphs
+exhausts spawn-depth budget, not the operator's patience — and the depth ceiling is checked
+against the parent's *current* remaining state at each hop, never against a state captured
+before the parent's own reservation (the executable kernel's F-3 correction). Parent interposition
 on child suspensions follows MAF's proven pattern — a parent executor can intercept a
 sub-workflow's request-info messages and answer or escalate (SOURCE-CODE OBSERVATION/HIGH) —
 generalized here as: a child cell's typed suspensions surface to the parent cell first, which
@@ -735,8 +934,8 @@ OUR PROPOSAL — the mechanism:
 
 1. **The script runner is a strategy** (a `HarnessBehaviour` hosting a sandboxed interpreter
    — WASM component or isolate per doc 07's isolation waves). The sandbox's *only* imports
-   are kernel verbs pre-bound to the cell's Grant: `invoke`, state-cell read, `emit`,
-   `suspend`. No filesystem, no network, no ambient anything: the script's blast radius is
+   are a subset of the frozen facade (§1.3a), pre-bound to the cell's Grant handle: `invoke`,
+   state-cell read, `emit`, `suspend` — a narrowing of `KernelApi`, never a parallel surface. No filesystem, no network, no ambient anything: the script's blast radius is
    exactly its Grant, which is the structural difference from every "the model wrote code,
    run it" design — and the reason generated code may hold authority where a Plan (§4.2) may
    not: its authority is a kernel-attenuated Grant, not self-asserted.
@@ -746,12 +945,18 @@ OUR PROPOSAL — the mechanism:
    declared inputs/outputs. This makes Claude Code's "save the workflow as a command" a
    substrate feature: one-off orchestration hardens into a named, versioned, benchmarkable
    capability with zero translation.
-3. **Effects get deterministic identity** derived from `(script hash, call-site index,
-   iteration counters, args hash)`, so resume replays completed invocations from the journal
-   instead of re-executing them — the same memoized-resume contract as graph nodes (§5.2).
-   Claude Code's order-dependent replay cache is the precedent and the warning: order-keyed
-   caching is fragile under nondeterministic script control flow (INFERENCE/HIGH), which is
-   why Kyxo keys on call-site + args, not sequence position.
+3. **Effects get content-inclusive, lineage-scoped identity** derived from `(capability,
+   script hash, call-site index, iteration counters, **args hash — mandatory**)`, so resume
+   serves completed invocations from the replay cache instead of re-executing them — the same
+   contract as graph nodes (§5.2). Claude Code's order-dependent replay cache is the precedent
+   and the warning: order-keyed caching is fragile under nondeterministic script control flow
+   (INFERENCE/HIGH), which is why Kyxo keys on call-site + args, never on sequence position
+   alone (amendment A1). Two consequences that are easy to lose: a *fork* of a script cell
+   inherits only the entries at or before the cut and refuses loudly on inherited irreversible
+   effects rather than reporting a cache hit for work it never did; and the replay cache is
+   **not** the reliability dedup window — the window is bounded (`dedupTTL ≥ maxRetryHorizon`)
+   and absorbs redeliveries, the replay cache is content-keyed and policy-governed, and only
+   the window belongs in the checkpoint (amendment A11).
 4. **Budget and depth are the loop policy's** (§3.2) — Claude Code's ≤16 concurrent / ≤1000
    agents / stagger rules (FACT) become ordinary declarative caps on the script cell's Grant
    slice rather than magic numbers in a runtime.
@@ -792,8 +997,10 @@ consequences of "strategies are capabilities running in cells under Grants":
    (SOURCE-CODE OBSERVATION/HIGH), here with budget and policy attenuation the wrapping
    lacks.
 2. **A loop can spawn a graph.** A loop harness invokes a planner, gets a Plan, and issues
-   `delegate` to a graph-runner capability with the compiled Graph — the child graph cell
-   runs under an attenuated slice, and its single result returns as an observation. Plan
+   `delegate` to a graph-runner capability with the compiled Graph — a delegate *proposal*
+   when the loop harness is itself running as a capability (§1.3a); the kernel attenuates from
+   the parent's remaining budget and runs the child graph cell as a **fresh** cell under that
+   attenuated slice, and its single result returns as an observation through the same channel. Plan
    mode grows teeth: instead of "same loop, read-only tools" (the industry's plan mode,
    SOURCE-CODE OBSERVATION/HIGH), the plan becomes an executable, verifiable artifact.
 3. **Generated code composes with both**: a script's `invoke` may target a harness or a
@@ -803,10 +1010,15 @@ consequences of "strategies are capabilities running in cells under Grants":
    another in-process; there is no shared mutable state between strategies except declared
    state cells with reducers. Cross-strategy visibility is journal projection, never
    ambient.
-5. **Recursion is bounded structurally**: spawn depth/width are quantitative Grant rights
-   decremented per delegation; exhaustion produces the typed `budget-exceeded` suspension —
-   escalation, not overflow (spine §3, object 7; the enforcement contract Claude Code
-   documents as refuse-spawn/stop-children/typed-error, made uniform).
+5. **Recursion is bounded structurally**: spawn depth/width are quantitative Grant limits
+   attenuated at every delegation hop and checked along the whole chain at admission. They are
+   **ceilings, not partitions** (doc 17 §9a): sibling grants may overcommit their declared
+   limits while chain admission still bounds collective spend, which is thin provisioning
+   chosen because AI workloads cannot predict how spend distributes across delegated branches.
+   Exhaustion produces the typed `budget-exceeded` suspension — a `kernel`-origin suspension
+   in A10's discriminator, resumable only with a re-grant — so the outcome is escalation, not
+   overflow (spine §3, object 7; the enforcement contract Claude Code documents as
+   refuse-spawn/stop-children/typed-error, made uniform).
 6. **`switch-strategy` is a first-class continuation** (§1.3): a stagnating loop can hand
    its objective and carried artifacts to a plan-execute strategy (or vice versa) inside the
    same cell lineage, journaled as an ordinary decision with its triggering signals.
@@ -827,4 +1039,113 @@ full fidelity) is our evidence the substrate, not the frontend count, is the loa
 design — but doc 37's benchmarks must confirm the frontends don't diverge semantically under
 faults. (4) Model-behavior profiles put vendor-specific behavioral claims into manifests;
 keeping them honest requires the probe + telemetry overlay to actually ship (doc 06), or the
-profiles rot into folklore.
+profiles rot into folklore. (5) **The facade is frozen at Wave 0** (amendment A4): the six
+callbacks, the closed decision union, and the `KernelApi` verb list `HarnessCtx` extends are
+now a versioned, conformance-tested contract rather than a sketch this document may widen when
+a strategy wants one more verb. Every future orchestration idea must be expressible as
+callbacks over that surface, or it is a protocol revision — which is the intended pressure,
+and also a real constraint on how fast this layer can absorb a surprise.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendments A1, A4, A10 and A13 applied to the body; A2 (already applied in phase 1) carried
+through the residual wording it had missed; A8 and A11 aligned where they touch this
+document's surfaces. Nothing here should now state pre-review behavior as current fact.
+Superseded readings are retained only where the analysis that forced the change is
+instructive, and are marked as superseded at the point of use.
+
+**A4 — facade freeze.**
+- §1.3: `HarnessCtx` is now **defined as `interface HarnessCtx extends KernelApi`** — a typed
+  extension of the Wave-0 frozen, versioned, conformance-tested facade (doc 06 §8a.1 carries
+  the normative verb list), narrowed to one cell and one Grant handle and widened only by
+  loop-specific *views*. The inherited verb list is stated inline so this document cannot
+  drift into declaring a second one. `grant: GrantView` → `grant: GrantHandle` (A8); an
+  injected clock added as a member; `bindings` noted as carrying per-property guarantee
+  grades (A3).
+- New §1.3a **The facade is frozen — and delegation needs no handle at all**: the freeze and
+  its accepted price, then the executable finding that a capability holds *no* kernel object.
+  A capability yields `{ type: 'delegate', capabilityId, request, step }` and receives a
+  `DelegationOutcome` back through the generator channel; the kernel attenuates the child's
+  authority from the parent's **current remaining** budget and runs it in a fresh cell. Four
+  consequences drawn for this document: a harness running as a capability holds nothing and
+  its `{ kind: "delegate" }` continuation lowers to a proposal, with `AttenuationSpec` demoted
+  to a *request*; the driver (stdlib) is what holds the facade; refused delegation journals
+  `policy.denied` (I22, doc 20 F-3); the decision union stays closed because it is lowered
+  onto validatable proposals. The phase-1 "small handle is a safe handle" reasoning is
+  retained, marked superseded, with its actual defect named (a callable handle makes the
+  commit barrier cooperative rather than structural).
+- §1.4 point 1 and the §1.4 diagram updated to the proposal-shaped delegation path.
+- §7.3: new cost (5) — the freeze is a real constraint on how fast this layer can absorb a
+  surprise, stated rather than elided.
+
+**A1 — fork/effect-identity semantics.**
+- §5.2 bullet 3 retitled **content-inclusive, lineage-scoped identity**: the positional tuple
+  is demoted to *step identity* and the **effect key** is `(capability, step identity, args
+  hash)` with the args hash mandatory. Using position as the effect key is named as retired,
+  with the stale-cache-hit corruption it caused; inherited unsafe effects refuse loudly across
+  forks (I13, I24; doc 20 F-1).
+- New **§5.4.1 Mutation while a join is partially satisfied** — the question §5.4 previously
+  deferred to a future doc-08 treatment. Three rules: lineage-scoped effect identity across
+  rebase-vs-fork; a mandatory explicit journaled disposition per pending writer (`adopt` /
+  `re-lease` / `compensate` / `abandon`) with fork-fails-loudly on an unaddressed pending; and
+  compensation as the normative repair for `external-irreversible` writers. Reducer/barrier
+  mechanics spelled out per disposition, including recomputing a `count`-form barrier's
+  target. Merge stated as unsupported; divergence documented as first-class.
+- §5.4: rebase keyed on the *effect key* rather than "deterministic identity"; the closing
+  INFERENCE no longer defers the pending-join case.
+- §5.4 mermaid redrawn: the mutation path now passes through an explicit disposition gate with
+  both outcomes (in-lineage rebase, or fork into a new lineage inheriting the index at the cut
+  only).
+- §6 point 3: script-effect identity made content-inclusive and lineage-scoped, with fork
+  behaviour and the replay-cache/dedup-window split stated (A11).
+
+**A13 — selection contract.**
+- §2.3 point 1: eligibility and selection separated explicitly; `rank(candidates, telemetry,
+  policy) → choice + journaled rationale` named; the benchmark runner pins `rank` to
+  enumerate-all so measurement does not inherit routing bias.
+- §2.3 point 5: telemetry restated as the contract's `telemetry` argument; V1 default (declared
+  preference order + probe freshness) and Wave-3 telemetry ranking with a now-frozen schema.
+- §4.2: new paragraph **cost estimates come from the selection contract**; `budgetHint` is
+  sourced from the same telemetry stream the router reads, so plan and router cannot disagree
+  about a step's cost. Two qualifications kept honest: V1 hints are `declared`-grade until a
+  step class has settlement history, and the history includes failed attempts (A2), so a
+  success-only estimator under-prices the steps that fail.
+- §4.3: the cost-aware planner family restated as a *consumer* of the selection contract
+  rather than a second routing mechanism; the closing sentence rewritten around the two-step
+  contract.
+- §5.2 bullet 1: graph-node provider choice split into bind-time eligibility and a routing
+  strategy's selection, with the rationale journaled beside the node's invocation.
+
+**A10 — prototype-driven contract fixes.**
+- §1.2 table: cancellation *requests* journaled when made; suspension records carry the
+  `origin` discriminator (provider | policy | kernel).
+- §1.3 `suspend` and §5.3: same, with the per-origin resume semantics spelled out
+  (kernel-origin resumes only with a re-grant).
+- §2.4: ranked/tiered model-behavior fields carry their **ordered ladder as manifest data**;
+  the kernel gates ladder positions for axes whose meaning it was never taught (I1), with the
+  hard-coded-ladder failure mode named.
+- §3.2 `escalationLadder`: annotated as policy/manifest data.
+- §3.4: cancellation-request journaling added to the loop's observability guarantees.
+- §5.4: removed nodes cancelled with the request journaled at issue time.
+- §5.5 and §7.2 rule 2: child orchestrators run in **fresh** cells, stated as normative, with
+  the single-writer reentrancy deadlock named as the thing designed away; spawn-depth checked
+  against the parent's current remaining state (doc 20 F-3).
+
+**A2 (residual wording).** §1.2 diagram label and §2.3 point 4: "budget charge" / "Grant
+decrements" → reserve-at-lease / settle-at-outcome / release-remainder, with the observation
+that settlements include failed and abandoned attempts — which is the entire reason the charge
+point was split from the commit point.
+
+**A3 / A8 / A11 / A12 / A14 (incidental).** §1.3: grant handles are unforgeable objects and the
+journal's grant reference is non-resolvable (A8); bindings carry per-property guarantee grades
+(A3). §5.2 and §6: the content-keyed replay cache and the bounded reliability dedup window are
+named as two mechanisms with two contracts, and only the window is checkpoint-resident (A11).
+§3.3: a `judge-verdict` termination policy whose verdict gates an effect is always journaled
+with an input hash regardless of policy profile (A12). §2.4: only probe-backed profile axes may
+carry an enforcement badge (A14).
+
+**§7.2 rule 5.** Grant limits restated as **ceilings enforced along the chain at admission**,
+not partitioned reservations (doc 17 §9a), so this document cannot be read as promising
+partitioned budgets to sibling branches.

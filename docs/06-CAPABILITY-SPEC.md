@@ -731,7 +731,9 @@ and the journal shows both the failure and the retreat.
 Three fields deserve emphasis:
 
 - **`grantRef` is a non-resolvable identifier (amendment A8; ADR-020).** It attributes the binding to an
-  authority for audit; it cannot be exchanged for that authority. The authority itself is the
+  authority for audit; it cannot be exchanged for that authority. It is the same identifier the
+  journal envelope carries as `grantId` (08-EVENT-AND-STATE-MODEL.md §2.1) with identical
+  semantics — two field names, one non-resolvable reference, no second concept. The authority itself is the
   kernel-minted handle held by whoever bound, and possession of the handle *is* the right to
   invoke. This is why the sealed record — and the journal events derived from it — are safe to
   export, mirror, and show an operator: nothing in the truth plane is a credential.

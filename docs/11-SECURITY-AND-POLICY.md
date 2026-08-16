@@ -1,9 +1,22 @@
 # 11 — Security and Policy
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A3, A6, A8, A12. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document predates the adversarial review; the
+> review's binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14),
+> with the full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2 (reserve/settle/release replaces decrement-at-commit: §2.1, §3.4 diagram),
+> A3 (advisory-vs-enforced resolved into guarantee grades; the mediation waterline: §4.1, §7, §8),
+> A6 (the MVP non-cooperative enforcement floor, which narrows the "auditability, not containment"
+> caveat to in-process strategy code: §4.1a, §8), A8 (handle-identity authority, with the
+> executable forgery finding: §2.2 I1, §2.6), A12 (allow-path journaling as a policy-class knob;
+> model-judge verdicts always journaled: §3.4, §3.5). **Outstanding:** none known.
+> Where this document conflicts with the Amendment log, **the amendment log governs**.
+>
+> **Executable semantics supersede prose.** The authority model, the commit barrier and the
+> budget lifecycle are executable in `prototypes/kernel-semantics/` (normative prose in
+> `docs/17-KERNEL-SEMANTICS.md`, checked invariants in `docs/18-KERNEL-INVARIANTS.md`,
+> falsifications in `docs/20-SEMANTIC-TEST-RESULTS.md`). Two of this document's phase-1 claims
+> were falsified by that code and are corrected in place (§2.6). Where the narrative here and
+> that code disagree, the code is correct and this document is the defect.
 
 
 Status: Phase 20 deliverable, written from `research/DESIGN-SPINE.md` (pre-adversarial-review).
@@ -22,8 +35,11 @@ preserve its labels is defined in 09-CONTEXT-AND-MEMORY; the commit-gate verific
 feeds is detailed in doc 10; operational failure handling is doc 13.
 
 The design goal in one sentence: **no sequence of model-emitted tokens may cause the
-authority held by any Cell to grow.** Everything below is either machinery to make that
-invariant structural, or an honest account of what the invariant does not buy.
+kernel-issued authority held by any Cell to grow.** Everything below is either machinery to make
+that invariant structural, or an honest account of what the invariant does not buy. The
+qualifier "kernel-issued" is load-bearing and is unpacked in §2.2 (I2): authority a component
+brought with it — ambient OS credentials, the host process's own network stack — was never
+issued by a Grant and is bounded by the enforcement floor of §4.1a, not by this invariant.
 
 ---
 
@@ -64,22 +80,58 @@ reference and labels** — there is no unmediated path.
 
 The Grant (kernel object 7, 05-KERNEL-PRIMITIVES) is an unforgeable, attenuable, revocable
 authority reference carrying rights (what) and quantitative budget (how much: tokens, money,
-wall-clock, invocations, spawn depth/width, risk class). Grants form a lineage tree; the
-kernel decrements budgets at commit. This section states the security invariants that make
-Grants the answer to T8, with their evidence.
+wall-clock, invocations, spawn depth/width, risk class). Grants form a lineage tree.
 
-### 2.2 The five invariants
+**Budget lifecycle (amendment A2).** The kernel **reserves** against every ancestor grant at
+admission — durably, *before* dispatch — **settles** the actual usage at outcome commit, and
+**releases** the unused remainder, emitting distinct `grant.reserved` / `grant.settled` /
+`grant.released` events. *(Superseded by A2: this section previously said "the kernel decrements
+budgets at commit". Retained because the analysis that forced the change is instructive —
+decrement-at-commit can only detect exhaustion* after *the spend has happened, which for an
+irreversible effect is the wrong side of the event; and concurrent in-flight invocations could
+overdraw a single grant chain in the window between dispatch and commit.)* A grant's limits are
+**ceilings enforced along the whole chain at admission, not partitioned reservations** — sibling
+grants may overcommit while actual spend stays bounded by every ancestor (doc 17 §9a; doc 20
+F-7, recorded as a contract defect precisely because readers assumed set-aside budget).
 
-**I1 — Unforgeability: a Grant is a kernel reference, never a string the model can
-fabricate.** The model's output channel is text. When a model "calls a tool," it emits a
-*name*. In Kyxo, that name is resolved against the table of Bindings the invoking Cell
-actually holds — the model only ever *names bindings the kernel already holds on the Cell's
-behalf*. Emitting the name of a Binding the Cell does not hold is a resolution failure, not
-an authority question. There is no path from token emission to authority: authority is a
-kernel-side reference, designation without possession is inert. This is Cap'n Proto's rule —
-capabilities "both designate an object to call and confer permission to call it" (FACT,
+This section states the security invariants that make Grants the answer to T8, with their
+evidence.
+
+### 2.2 The six invariants
+
+**I1 — Unforgeability: authority is object identity in a kernel-private registry, never a
+string anyone can present** (amendment A8). The model's output channel is text. When a model
+"calls a tool," it emits a *name*. In Kyxo, that name is resolved against the table of Bindings
+the invoking Cell actually holds — the model only ever *names bindings the kernel already holds
+on the Cell's behalf*. Emitting the name of a Binding the Cell does not hold is a resolution
+failure, not an authority question. There is no path from token emission to authority:
+designation without possession is inert. This is Cap'n Proto's rule — capabilities "both
+designate an object to call and confer permission to call it" (FACT,
 research/notes/prior-art-negotiation-extension.md) — split correctly for a world where the
 principal can only emit designations.
+
+The mechanism that makes "possession" real is stronger than the phrase "kernel reference"
+suggests, and the difference is not academic:
+
+- **Userland holds handles, not identifiers.** A Grant handle is an *object the kernel minted*
+  and tracks in a private registry (a `WeakSet` in the reference kernel). Authority is decided by
+  object identity: the kernel accepts a handle if and only if it minted that exact object.
+  Constructing an object of the same class with a known id, forging the prototype, or shallow-
+  copying a genuine handle all fail — three attacks asserted in `grants.test.ts`, with the
+  genuine handle still working.
+- **Journal grant references are non-resolvable.** The identifier written on an event names the
+  authority for attribution and audit; it cannot be exchanged for the authority. Reading the
+  journal, a trace, or an error message therefore confers nothing.
+
+**This invariant exists because the reference kernel got it wrong first** (doc 20 F-2). The
+initial implementation guarded `GrantHandle` construction with a `KERNEL_MINT` symbol — which the
+types module *exported*. Any module that could `import { KERNEL_MINT }` could mint a valid handle
+for any grant id read off a journal event: the exported guard was itself the forgery hole, and
+the implementation had committed exactly the sin this document criticises in ACL designs — a
+secret that is authority the moment you know it. The fix was to stop treating any *value* as
+proof and make the kernel's own registry the arbiter. Recorded as invariant I21 in
+18-KERNEL-INVARIANTS, and generalised as a design rule: **if authority can be reconstructed from
+data, it is not authority — it is a password.**
 
 **I2 — No ambient authority: an empty Cell has no authority.** A freshly created Cell holds
 nothing: no tools, no filesystem, no network, no model access. Everything it can do arrives
@@ -90,23 +142,58 @@ no ambient authority" (FACT, research/notes/prior-art-negotiation-extension.md).
 kernel makes the same commitment: kernel objects carry no intrinsic permissions; all
 authority is on Grants.
 
+**The honest boundary of I2: this is a statement about kernel-issued authority only.** Zircon
+can say "an empty process has no ambient authority" because the OS owns every channel to the
+outside world. Kyxo's kernel owns every channel *it issues* — and in V1 it shares an address
+space with the code it is issuing to. So the invariant reads precisely:
+
+> No sequence of model emissions, and no action by a strategy or capability, can cause the
+> authority **the kernel has issued** to a Cell to grow. Authority a component *brought with it*
+> — the host process's own file descriptors, environment variables, network stack, and ambient
+> OS credentials — was never issued by the kernel, is not tracked by the Grant tree, and is not
+> bounded by it.
+
+Two mechanisms address the brought-authority half, and neither is I2: the **enforcement floor**
+(§4.1a) puts effectful standard capabilities behind an OS boundary where the environment they can
+reach *is* the grant-scoped one, and the **isolation waves** (07-RUNTIME-ARCHITECTURE §8.2)
+extend that boundary to arbitrary providers. Until a component sits behind one of those
+boundaries, the correct claim about it is auditability, not containment (§4.1a). Saying I2
+covers brought authority would be the same overclaim that amendment A3 removed from the
+positioning — enforcement asserted over execution the runtime does not mediate.
+
 **I3 — Attenuation-on-delegation is mandatory, checked at mint time.** Delegation (spine §2:
 invocation of a capability that is itself an orchestrator, under an attenuated grant) mints a
 child Grant whose scope, budget, TTL, spawn depth, and risk-class ceiling are each ≤ the
 parent's. The kernel refuses to mint otherwise — this is not policy, it is the Grant
-constructor's type. seL4's precedent: copies are minted with a *subset* of rights, never
-amplified (FACT, research/notes/prior-art-negotiation-extension.md). Budgets ride the same
-mechanism as rights: a child's token/money/wall-clock budget is carved out of the parent's,
-so the delegation tree is simultaneously the resource-lineage tree (spine §3.7 flags
-budgets-as-attenuated-quantitative-rights as our one genuinely novel kernel object).
+constructor's type — and it validates against the parent's **current remaining state**, not a
+snapshot taken earlier in the call (the stale-snapshot bug, doc 20 F-3). seL4's precedent:
+copies are minted with a *subset* of rights, never amplified (FACT,
+research/notes/prior-art-negotiation-extension.md). Budgets ride the same mechanism as rights,
+with one property that must not be misread: a child's token/money/wall-clock limit is a
+**ceiling ≤ the parent's remaining, not a partition carved out of it** (§2.1). Ten children of a
+parent holding 5 invocations may each declare 4; admission then admits exactly 5 across all of
+them, because it checks every ancestor in the chain. The delegation tree is still the
+resource-lineage tree (spine §3.7 flags budgets-as-attenuated-quantitative-rights as our one
+genuinely novel kernel object) — it is a tree of *limits*, not of *allocations*, and a surface
+that renders a child's limit as reserved budget is misreporting it (doc 20 F-7).
 
 **I4 — Revocation is transitive over the delegation tree.** Revoking a Grant invalidates
 every Grant derived from it, atomically from the kernel's perspective: killing a Cell kills
 everything it delegated, however deep. seL4's `seL4_CNode_Revoke` "deletes a capability and
 every capability derived from it" (FACT, research/notes/prior-art-negotiation-extension.md).
-In-flight Invocations under a revoked Grant transition to `canceled` through the scheduler's
-cancellation propagation (08-EVENT-AND-STATE-MODEL); their partial effects remain journaled
-and labeled, but no further effect can commit.
+In-flight Invocations under a revoked Grant are caught by an **authority re-check at the commit
+point** — a time-of-use check, not only a time-of-admission one: the settlement path re-reads
+the whole grant chain, and a revocation that landed mid-flight commits `grant.denied`
+(`reason: revoked-mid-flight`) followed by `invocation.failed`
+(`authorization-revoked-post-hoc`), releases the reservation, and **promotes no artifacts**, so
+no benefit is conferred by work performed under authority that has since been withdrawn. If the
+external world already saw an effect, that fact is journaled (`landedExternal`) rather than
+hidden — a denied outcome must not erase evidence of what happened. *(Superseded reading: this
+paragraph previously said such invocations "transition to `canceled` through the scheduler's
+cancellation propagation". Cancellation propagation is a real and separate path — and
+cancellation **requests** are themselves journaled, per A10 — but revocation is adjudicated at
+the commit gate, and the distinction matters because `canceled` and `failed` carry different
+meanings for an auditor.)*
 
 **I5 — Interposition is invisible to the holder.** Policy wraps a Binding in a filter — a
 recorder, a redactor, a rate-limiter, a sandbox adapter — and the holder cannot distinguish
@@ -115,6 +202,28 @@ Component Model's "virtualizable imports" (any import can be satisfied by anothe
 and the component cannot tell) (FACT, research/notes/prior-art-negotiation-extension.md).
 Invisibility matters for security, not just elegance: a model that can detect interposition
 can condition its behavior on being observed.
+
+**I6 — The commit barrier is structural: a capability holds nothing it could write truth
+with.** The five invariants above bound what authority a participant *has*; this one bounds what
+it can *assert*. A capability provider receives `InvokeCtx` — invocation id, execution id, an
+injected clock value, an attempt counter, the request, an optional resume payload, and a
+read-only cancellation signal. There is no kernel, journal, storage, or grant object on it
+(amendment A4; ADR-017). Its only channel to durable truth is yielding typed **effect
+proposals**, which accumulate in a staging area it cannot address and which the kernel validates
+— re-checking authority to catch revocation mid-flight, running commit-phase policy stages,
+applying the evidence gate — before constructing events and writing one atomic commit record.
+Two security consequences: a capability cannot append an authoritative event (so history cannot
+be fabricated), and **a capability cannot report success that the commit gate rejects** (so
+"the agent said it verified the fix" is not a fact the journal will carry). Delegation needs no
+exception: a capability yields a `delegate` proposal and receives the outcome back through the
+generator channel while the kernel attenuates authority for the child — recursion is bounded by
+authority rather than by a counter.
+
+*(Phase-1 handed each capability a live kernel handle and described that handle as the
+provider's authority. Superseded; retained because the analysis that forced the change is
+instructive — a handle you are given in order to call back through is still ambient authority
+relative to the commit point, and every future writer verb on it would have been a new bypass to
+audit.)*
 
 ### 2.3 The convergence evidence
 
@@ -128,7 +237,8 @@ Evidence       — Four unrelated systems independently converged on identical a
                  no kernel-side authorization checks, no ambient authority in an empty
                  process). All FACT, research/notes/prior-art-negotiation-extension.md.
 Interpretation — A language, an RPC protocol, a verified microkernel, and a production OS
-                 arriving at the same five invariants under unrelated pressures is the
+                 arriving at the same five authority invariants (I1–I5; I6 is ours, from
+                 the commit barrier) under unrelated pressures is the
                  strongest convergence signal in the entire research program (the note calls
                  it exactly that). These invariants are not a school of thought; they are
                  what authority looks like when delegation is the dominant operation.
@@ -166,29 +276,74 @@ surveyed permission system through it:
   cannot defer: it owns delegation, so it must own attenuation.
 
 Under Grants, the test passes structurally: the model can only name Bindings its Cell holds
-(I1); a Cell starts empty (I2); minting requires a parent Grant with a superset (I3); and
-policy state that *could* widen authority (the pipeline definitions of §3) is itself reachable
-only through capabilities that agent-facing Cells are never granted. Privilege escalation
-requires a principal that already holds the privilege — which is the definition of not being
-an escalation.
+(I1); a Cell starts empty of kernel-issued authority (I2); minting requires a parent Grant with
+a superset, checked against the parent's *current* remaining state rather than a stale snapshot
+(I3); a capability cannot assert its way past the commit gate (I6); and policy state that
+*could* widen authority (the pipeline definitions of §3) is itself reachable only through
+capabilities that agent-facing Cells are never granted. Privilege escalation requires a
+principal that already holds the privilege — which is the definition of not being an escalation.
+
+The test's scope is the scope of I2's honest boundary: it is a claim about *issued* authority.
+A component that already possesses ambient OS authority does not need to escalate, and no
+invariant in this section pretends otherwise — that is the enforcement floor's job (§4.1a).
 
 ### 2.5 The delegation tree
 
 ```mermaid
 flowchart TD
-    U["User principal<br/>root Grant: scope=project, budget=$10, TTL=8h"]
-    U -->|"attenuate: mint child"| C0["Cell: main harness run<br/>scope=repo RW, $10, spawn-depth 3"]
-    C0 -->|"child ≤ parent"| C1["Cell: research subagent<br/>scope=repo RO, $1, TTL=20m, no spawn"]
-    C0 -->|"child ≤ parent"| C2["Cell: generated workflow<br/>scope=agent()+pipeline() only, $3"]
-    C2 -->|"child ≤ parent"| C3["Cell: workflow step<br/>scope=one file, $0.20"]
+    U["User principal<br/>root Grant HANDLE: scope=project, budget=$10, TTL=8h"]
+    U -->|"attenuate: mint child handle<br/>(checked vs parent's CURRENT remaining)"| C0["Cell: main harness run<br/>scope=repo RW, ≤$10, spawn-depth 3"]
+    C0 -->|"child ≤ parent"| C1["Cell: research subagent<br/>scope=repo RO, ≤$1, TTL=20m, no spawn"]
+    C0 -->|"child ≤ parent"| C2["Cell: generated workflow<br/>scope=agent()+pipeline() only, ≤$3"]
+    C2 -->|"child ≤ parent"| C3["Cell: workflow step<br/>scope=one file, ≤$0.20"]
     C0 -.->|"revoke ⇒ transitive"| C1
     C0 -.->|"revoke ⇒ transitive"| C2
     C2 -.-> C3
+    J[("journal: grant.reserved / settled / released / denied<br/>grant references here are NON-RESOLVABLE (A8)")]
+    C0 -.records.- J
+    C1 -.records.- J
 ```
 
-Every edge is a kernel-minted attenuation; every node's authority is exactly its incoming
-Grants; revoking any edge severs the whole subtree. The same tree carries budget lineage and
-— per §6 — is the audit trail.
+Every edge is a kernel-minted attenuation; every node's authority is exactly the handles it
+holds; revoking any edge severs the whole subtree. Limits on an edge are **ceilings, not
+set-aside budget** (§2.1): siblings may declare more in total than the parent holds, and
+admission — which checks remaining budget at every ancestor — is what keeps actual spend
+bounded. Refusals are journaled (`grant.denied`) rather than swallowed; a delegation that failed
+for lack of authority leaving no trace was a real defect in the reference kernel (doc 20 F-3).
+The same tree carries budget lineage and — per §6 — is the audit trail.
+
+### 2.6 What the executable kernel establishes — and what it does not
+
+Everything above was, in phase 1, an argument. It is now partly a test result, and the
+distinction between the parts matters more than the green tick. The reference implementation
+lives in `prototypes/kernel-semantics/`; the falsification record is 20-SEMANTIC-TEST-RESULTS.
+
+**Established by execution (attacks that were run and failed):**
+
+| Claim | How it was attacked | Result |
+|---|---|---|
+| A malicious capability cannot reach the kernel, journal, storage or authority | A deliberately hostile provider enumerates every property of its `InvokeCtx` looking for a callable surface | Finds none — `InvokeCtx` is data (`universality.test.ts`, "malicious capability containment") |
+| A capability cannot self-certify success past a commit gate | Provider returns `{status:'ok'}` while proposing failing Evidence under `requiresEvidence` | Invocation lands `failed`, **zero** artifacts promoted (doc 18 invariants I4, I17) |
+| A Grant handle cannot be forged | Three attacks: construct the handle class with an id read off a journal event; forge the prototype; shallow-copy a genuine handle | All three rejected; the genuine object still works (doc 18 invariant I21) |
+| Delegation cannot broaden authority, at any depth | Recursion-bound tests plus attenuation attacks (added rights, excess budget, stale-parent snapshots) | Refused and journaled at every hop (doc 18 invariants I5, I18) |
+| An authority or policy refusal cannot vanish | Coverage guard requires ≥20 journaled policy denials per generated run | Enforced in CI (doc 18 invariant I22) |
+| Revoked authority cannot be resurrected by a checkpoint | Revoke after the cut, then fork from the checkpoint | Grants are re-resolved at fork; revocation stays (doc 17 §8.2 — this is what closes R3 in §8) |
+
+Scale for the whole suite: 4,500 coverage operations + 4,800 property operations + 32
+crash-point recoveries, with the full invariant set asserted after **every** operation, plus
+24,000 fuzz operations. Seven findings came out of it, two in the security machinery: F-2
+(handle forgery, §2.2 I1) and F-3 (delegation computing child budgets from stale authority and
+then swallowing the refusal, §2.5).
+
+**Not established, and not claimed.** The suite exercises the *kernel's* boundaries inside one
+process. It says nothing about (a) confinement of a capability that ignores the kernel entirely
+and reaches ambient OS authority — that is the enforcement floor's job (§4.1a), and the
+isolation waves' after it; (b) anything above the mediation waterline (§7), where the runtime
+holds reports rather than execution; (c) whether a capability's *declared* effect class is
+truthful — a lie there defeats recovery triage, and the mitigation is probes and telemetry, not
+structure (doc 20 §5). A malicious capability that cannot corrupt the record can still do damage
+in the world. What the kernel guarantees is that the damage is attributable, bounded by issued
+authority, and never mistaken for verified success.
 
 ---
 
@@ -302,23 +457,68 @@ the sole gate only for reversible effects. Claude Code exhibits the same instinc
 form: even in the model-adjudicated `auto` mode, deny rules still bind (FACT,
 research/notes/anthropic-claude-code-agent-sdk.md).
 
+**And the second half of the caveat, added by amendment A12: a model-judge verdict that gates an
+effect is *always* journaled to the truth plane, with a hash of the judge's inputs — in every
+profile, including the ones where ordinary allow-path traces stay advisory (§3.5).** The reason
+is asymmetric with the rest of the pipeline. A deterministic stage can be re-evaluated later
+from journaled inputs, so its allow trace is reconstructible; a model verdict cannot be, because
+the same inputs may not produce the same verdict tomorrow, under a different model version, at a
+different temperature. An unrecorded model verdict is therefore not a diagnostic that can be
+regenerated — it is evidence that never existed. Journaling the verdict with an input hash does
+not make a non-deterministic gate deterministic; it makes it **attributable**, which is the most
+that can honestly be claimed for it. "Advisory-tier" governs what a judge is allowed to decide
+alone; it never means the decision may go unrecorded.
+
 ```mermaid
 flowchart LR
-    M["model emits<br/>designation + args"] --> R["resolve against Cell's<br/>held Bindings (I1)"]
+    M["model emits<br/>designation + args"] --> R["resolve against Cell's<br/>held Binding HANDLES (I1)"]
     R -->|no Binding| X1["resolution failure<br/>(inert)"]
-    R --> P1["1 interpose"]
+    R --> ADM["admission:<br/>authority re-check +<br/>grant.reserved (A2)<br/>durable before dispatch"]
+    ADM -->|no authority / no budget| XD["rejected —<br/>grant.denied journaled"]
+    ADM --> P1["1 interpose"]
     P1 --> P2["2 deny<br/>(non-bypassable)"]
-    P2 -->|match| X2["rejected"]
+    P2 -->|match| X2["rejected —<br/>policy.denied journaled"]
     P2 --> P3["3 label gate (§5)"]
-    P3 -->|taint violation| Q["quarantine /<br/>rejected"]
+    P3 -->|taint violation| Q["quarantine /<br/>rejected (journaled)"]
     P3 --> P4["4 verdict"]
     P4 -->|suspend| S["approval-required<br/>(typed suspension →<br/>human / judge / rule)"]
-    S -->|verdict: allow| P5
-    S -->|verdict: deny| X3["rejected"]
-    P4 --> P5["5 allow / 6 default"]
-    P5 --> E["effect executes in<br/>enforcement layer (§4)"]
-    E --> C["commit: budget decrement,<br/>journal Event, labels on Artifact"]
+    S -->|"verdict: allow<br/>(judge verdicts ALWAYS journaled<br/>with input hash — A12)"| P5
+    S -->|verdict: deny| X3["rejected (journaled)"]
+    P4 --> P5["5 allow / 6 default<br/>(allow-path trace: advisory by default,<br/>truth in the regulated profile — A12)"]
+    P5 --> E["effect executes in<br/>enforcement layer (§4):<br/>OS sandbox + grant-scoped<br/>credentials/egress (A6)"]
+    E --> V["commit-phase validation:<br/>authority re-checked (revocation<br/>mid-flight), evidence gate applied"]
+    V -->|gate fails| XF["failed — staged artifacts<br/>discarded, not promoted (I6)"]
+    V --> C["commit record (atomic):<br/>journal Events · labels on Artifact ·<br/>grant.settled + grant.released (A2)"]
 ```
+
+### 3.5 What the pipeline journals: the allow-path knob (amendment A12)
+
+A policy layer that records only its refusals can prove what it stopped and not what it
+permitted. For an incident review — or a regulator — the second question is usually the
+interesting one. But allow traces are also the highest-volume thing the pipeline produces, and
+putting all of them in the truth plane taxes every deployment for a property most do not need.
+Amendment A12 resolves this as a **policy class**, not a global default:
+
+| What | Plane | Profile |
+|---|---|---|
+| **Every refusal** — `policy.denied`, `grant.denied`, label-gate rejections, quarantine | **Truth**, always | all |
+| **Verdict-stage outcomes** — approvals, rejections, escalations, with the deciding principal and responsibility metadata | **Truth**, always | all |
+| **Model-judge verdicts gating an effect** — with a hash of the judge's inputs (§3.4) | **Truth**, always | all |
+| **Allow-path evaluation traces** — which stages ran, what matched, what transformed | **Advisory** (derived stream, not the ledger) | default |
+| **Allow-path evaluation traces** | **Truth** — a declared policy class, with its journal-growth cost accepted deliberately | regulated |
+
+The default is defensible precisely because deterministic policy stages are pure functions of
+(event, grant, pinned policy version): an allow trace is *reconstructible* from journaled
+inputs. But "reconstructible in principle" is not an audit record — reconstruction depends on
+still having the policy version, the evaluator, and someone willing to re-run it. The regulated
+profile therefore promotes allow traces to the truth plane as a declared class, so the deployment
+that needs to *prove* what it permitted can, and the deployment that does not is not billed for
+it. Two cases escape the knob in every profile, both listed above: judge-gated allows (not
+reconstructible at all — §3.4) and allows whose stage is deny-class (the stage exists to be
+non-bypassable; its outcome is an outcome).
+
+Doc 08 §3.1 carries the event-kind detail and the two-plane guarantees; the policy class itself
+is defined here, because it is a security decision rather than a storage one.
 
 ---
 
@@ -353,11 +553,73 @@ Implication    — Kyxo Grants must COMPILE DOWN to these three backends, not me
                  credentials minted at the boundary (never long-lived secrets in the
                  environment); its network rights compile to egress-proxy allowlists for
                  the Cell's sandbox; its filesystem/process rights compile to the sandbox
-                 profile. A Grant that cannot be compiled to an enforcement backend is
-                 flagged as advisory at bind time — the kernel never lets declared policy
-                 silently exceed enforced policy.
+                 profile. A Grant right that compiles to an enforcement backend is sealed
+                 on the Binding with guarantee grade `enforced`; one that does not is
+                 sealed `observed` or `declared` and says so (amendment A3) — the kernel
+                 never lets declared policy silently exceed enforced policy.
 Confidence     — HIGH.
 ```
+
+*(Superseded by amendment A3: this paragraph previously said such a Grant is "flagged as advisory
+at bind time". Retained because the analysis that forced the change is instructive — "advisory"
+was doing two jobs at once. It named a *negotiation* property (does the kernel gate on this axis
+at all?) and an *honesty* property (what backs the claim that the property holds in the world?),
+and collapsing them meant a Binding could be enforced-and-unbacked with no vocabulary to say so.
+The two are now separate fields: `enforcement: enforced | advisory` and
+`guaranteeGrade: enforced | observed | declared`, normative in 06-CAPABILITY-SPEC §2.3a.)*
+
+**Grades in this document's terms.** `enforced` means the effect cannot occur except through a
+mediation Kyxo owns — the three backends above are what "owns" cashes out to. `observed` means
+deviation is detectable after the fact from journaled outcomes or probe Evidence, but not
+preventable. `declared` means the publisher's signed word and nothing else. Grades are **per
+property, not per capability**: one model-adapter Binding routinely carries `enforced` on egress
+scope (our proxy), `observed` on token metering (reconciled from usage reports), and `declared`
+on data-residency (nobody local can check it). A grade never widens silently — expired probe
+Evidence demotes `observed` to `declared`, and the demotion is journaled.
+
+### 4.1a The MVP enforcement floor (amendment A6)
+
+The paragraph above states the ceiling as a design intent. Amendment A6 makes part of it a
+**shipping requirement of the MVP**, and the reasoning is worth keeping because it was the
+review's fatal finding against the whole project's justification.
+
+The original BUILD case rested partly on "grants and commit gates cannot be retrofitted into an
+existing framework". The review retracted that as the sole discriminator, on this ground: a
+middleware retrofit binds only *cooperative* code — and a V1 Kyxo whose enforcement is
+in-process ocap discipline **also** binds only cooperative code. Two systems that both depend on
+components choosing to go through the front door are not differentiated by one of them calling
+its front door a kernel. Therefore:
+
+> **Normative for the MVP:** every effectful standard capability — shell and HTTP first — runs
+> **OS-sandboxed** (tier `os` of §4.2: Seatbelt / Landlock+seccomp / bubblewrap per platform)
+> with **grant-scoped credentials** (§4.3's sentinel substitution and proxy re-injection) and
+> **grant-scoped egress** (per-Binding allowlist at the proxy). The sandbox profile and the
+> allowlist are *compiled from the Grant*, not configured beside it.
+
+What this buys, stated exactly: for the effect classes the floor covers, claim F7 — *a malicious
+strategy cannot exceed its grant* — becomes **falsifiable**, because the bound no longer depends
+on the strategy's cooperation. A shell capability that decides to ignore every kernel verb still
+cannot open a socket the egress proxy does not allow, read a path outside its workspace jail, or
+see a credential the proxy has not injected. That is enforcement in the sense §4.1 means it, and
+it is why the sandbox-escape and egress probes are red-team fixtures in the MVP test plan rather
+than a hardening-wave nicety.
+
+What this does **not** buy, and where the honest caveat now lives:
+
+| Component | Containment in V1 | Therefore |
+|---|---|---|
+| Effectful standard capabilities (shell, HTTP) | OS sandbox + grant-scoped credentials/egress | `enforced` grades available on filesystem scope, egress, credential audience |
+| MCP servers and other subprocess/remote providers | Process or network boundary (they are already shaped that way) | Enforced at the boundary; the declared-vs-actual gap is handled by grades (§7) |
+| **In-process strategy code and vetted in-process capabilities** | **None** | This — and only this — is where "the ocap machinery buys auditability, not containment" applies |
+
+So the caveat that phase 1 attached to the entire V1 runtime now attaches to one row of that
+table. In-process code is trusted code: no ambient authority appears in the API surface, every
+authority use is journaled, no path to the journal or to authority exists (§2.6) — and a
+determined in-process module can still reach ambient Node APIs and do damage the kernel never
+sees. The isolation waves (07-RUNTIME-ARCHITECTURE §8.2) extend the boundary to that row; until
+they land, this document does not claim containment for it. EXTEND remains the documented
+fallback if the Wave-4/5 crossing-cost measurements fail their budget — in which case the
+enforcement floor survives the move and the nine-object kernel does not.
 
 ### 4.2 Sandbox tiers behind a declarative enum
 
@@ -389,9 +651,12 @@ Implication    — Kyxo's execution-environment capabilities declare a sandbox t
                  code-act and untrusted plugins; imports = passed Bindings only, aligning
                  with the WASM-component extension path in spine §8) · `external`
                  (passthrough for environments isolated by the host: cloud VMs, Actions
-                 runners). The Binding records which tier was satisfied; policy can require
-                 a minimum tier per risk class. Mechanisms are per-platform plugins;
-                 the tier contract, not the mechanism, is the portable surface.
+                 runners). The Binding records which tier was satisfied, and the tier is
+                 what earns the `enforced` guarantee grade on the rights the sandbox
+                 actually bounds (§4.1); policy can require a minimum tier per risk class.
+                 Tier `os` is the MVP floor for effectful standard capabilities (§4.1a),
+                 not an opt-in. Mechanisms are per-platform plugins; the tier contract, not
+                 the mechanism, is the portable surface.
 Confidence     — HIGH.
 ```
 
@@ -580,11 +845,29 @@ research/notes/mcp-protocol.md). Signatures authenticate *origin and claim integ
 behavior: a signed manifest proves who said it, never that it is true (T3 remains open at
 this layer; see §8).
 
-**Enforced vs. advisory claims, and tenant scoping.** A2A's card design splits
-machine-enforced protocol capabilities (violations produce typed errors) from advisory
-skills (routing hints, never a contract) (FACT, research/notes/a2a-protocol.md). Kyxo's
-manifests keep that split explicit per axis: enforced axes participate in Binding
-negotiation and their violation is a Binding fault; advisory axes inform routing only.
+**Enforced vs. advisory axes — and, separately, guarantee grades (amendment A3).** A2A's card
+design splits machine-enforced protocol capabilities (violations produce typed errors) from
+advisory skills (routing hints, never a contract) (FACT, research/notes/a2a-protocol.md). Kyxo's
+manifests keep that split explicit per axis: enforced axes participate in Binding negotiation
+and their violation is a Binding fault; advisory axes inform routing only.
+
+That split answers *does the kernel gate on this axis?* It does not answer *what backs the claim
+that the axis is true?* — and for a remote, opaque capability that second question is the whole
+security problem. So the sealed Binding carries a second, orthogonal field per policy-relevant
+property, the **guarantee grade**:
+
+| | `enforcement: enforced` | `enforcement: advisory` |
+|---|---|---|
+| **`guaranteeGrade: enforced`** | The kernel gates on it *and* mediates it — local sandboxed effects, kernel-metered budgets, label propagation in our own paths | (not meaningful: an ungated axis is not being mediated) |
+| **`guaranteeGrade: observed`** | Gated at bind, verified after the fact — probe Evidence, reconciled usage reports | Routing hints backed by telemetry |
+| **`guaranteeGrade: declared`** | **Gated on the publisher's word.** Legitimate, common, and the case that must never be silently read as enforcement | Unbacked routing hints |
+
+The bottom-left cell is the honest one this section exists to name: a Binding can gate on an
+axis whose truth nothing but a signature supports. That is not a defect — for a remote executor
+it is often the only option — but it must be *visible*, because a policy decision taken on a
+`declared` axis is a decision taken on trust. Grades are sealed at bind, journaled, and demoted
+(never silently retained) when their backing evidence expires.
+
 A2A 1.0's `tenant` routing field is honored and mirrored: Bindings to multi-tenant remote
 endpoints are tenant-scoped, and the tenant ID participates in credential audience binding.
 
@@ -606,6 +889,19 @@ mediate is an effect the pipeline, labels, and audit trail silently miss. Everyt
 executor returns enters as untrusted-integrity Artifacts (§5.1); its authority over us is
 whatever Grant we attached to the Binding, and nothing more.
 
+**This is the mediation waterline, and it is where the security promise changes shape**
+(amendment A3). Below it — local tool runtime under the enforcement floor (§4.1a), self-hosted
+models, sandboxed environments — Kyxo mediates the execution path and a Binding may seal
+`enforced`. Above it — delegated vendor harnesses, provider-side domains, opaque A2A peers — the
+runtime holds declarations, mirrors and reports, so the offer is **attestation plus audit**:
+signed manifests (origin), mirrored artifacts and reconciled usage (evidence), journaled hook
+interpositions where the vendor exposes hooks. Wrapping a remote Binding in a local interposer
+does not raise its grade; the grade follows the mediation, not the wrapper. The practical
+consequence for a deployment is measurable rather than rhetorical: the share of effectful
+journal events originating in remote or delegated domains is tracked from V1 as a leading
+indicator (spine A3), because a deployment whose effects mostly happen above the waterline is a
+deployment where most of this document applies only as audit.
+
 ---
 
 ## 8. Residual risks — what this design does not solve
@@ -617,16 +913,129 @@ not close it, and the posture we take.
 |---|---|---|---|
 | R1 | **Model deception / misaligned intent** | Ocap bounds *authority*, not *intent*. A model pursuing the wrong goal inside its granted scope is invisible to every mechanism here; the kernel bounds blast radius, not judgment. | Least-authority defaults, risk-class ceilings, out-of-loop verification (doc 10), and human verdicts on irreversibility. Explicitly a mitigation, not a solution. |
 | R2 | **Semantic injection surviving labels** | Labels stop untrusted text from *reaching privileged argument positions*; they do not stop untrusted text from *persuading* within permitted flows. A quarantined summary of a hostile document is trusted-path text whose content is still attacker-influenced. Declassification points concentrate exactly this risk. | Conservative joins by default; declassification requires Grants + Evidence; quarantine restricts effect reach. INFERENCE/MEDIUM that this materially reduces, does not eliminate, T2. |
-| R3 | **Revocation vs. checkpoint resurrection** | Transitive revocation (I4) conflicts with Checkpoints that embed Grant references: restoring a Checkpoint could resurrect revoked authority; the prior-art note flags this as an open question (research/notes/prior-art-negotiation-extension.md, open question 3). | V1 proposal: Checkpoints store *petname-style Grant designators*, re-resolved against the live Grant tree at resume under current policy — safer, admittedly weaker than pure ocap (a resumed Cell may find authority gone and must handle `rejected` bindings). Flagged for adversarial review. |
+| R3 | **Revocation vs. checkpoint resurrection** — *resolved in phase 2, retained for the reasoning* | Transitive revocation (I4) conflicts with Checkpoints that embed Grant references: restoring a Checkpoint could resurrect revoked authority; the prior-art note flagged this as an open question (research/notes/prior-art-negotiation-extension.md, open question 3). | **Closed by the executable semantics, in the direction this row proposed**: grants are re-resolved at resume *and* at fork against live state, and a checkpoint MUST NOT resurrect revoked authority (doc 17 §8.2; `grants.test.ts` fork-vs-revocation). The cost the row predicted stands: a resumed or forked Cell may find authority gone and must handle the refusal, which is why refusals are journaled rather than silent (§2.5). What is *not* closed moves to R10. |
 | R4 | **Taint coarsening under compaction/summarization** | A summary of 50 mixed-label fragments joins to the worst label; long-running Cells trend toward everything-untrusted-and-private, and the workload migrates into declassification requests. No surveyed system has field data on sustained IFC utility in agentic loops (FIDES adoption unknown — open question in research/notes/microsoft-autogen-sk-agent-framework.md). | Span-level labels in compiled context (not document-level) to slow coarsening; measure declassification rates in the prototype; accept that labels may need granularity tuning. Confidence in long-run utility: MEDIUM. |
 | R5 | **Judge-model correlated failure and approval fatigue** | Guardian models share training-distribution failure modes with the models they judge; human verdict principals under volume rubber-stamp (observed across every approval UX in the landscape). | Advisory tier for model verdicts (§3.4); verdict-rate budgets and escalation policies on human capabilities; diversity of verdict principals is configuration, not guarantee. |
 | R6 | **Covert channels** | Budget consumption, invocation timing, event cadence, and error patterns are observable by anything watching derived streams and can encode information across confidentiality boundaries. Classical IFC does not close timing channels; neither do we. | Documented non-goal for V1. Exporter Grants (§5.4) bound the *audience* of derived streams, which is the practical mitigation. |
 | R7 | **Supply chain beneath the kernel** | The kernel's own dependencies, the sandbox implementations, model weights, and the signing infrastructure are all below the mechanisms defined here; a compromised Seatbelt profile or WASM runtime voids §4. | Standard software-supply-chain hygiene (pinning, provenance attestation, minimal kernel deps per spine §8's minimality discipline). Out of scope of this document's mechanisms; in scope of engineering practice. |
-| R8 | **Manifest truthfulness** | Signing (§7) proves origin; probes and telemetry narrow the declared-vs-actual gap but sample it, never close it (spine C3: declared capability ≠ competence — and ≠ honesty). A provider can behave until it matters. | Enforcement independence (§4): a lying manifest meets the credential/egress/sandbox ceiling, which never trusted the manifest. Blast radius of a malicious capability = its Grant, exactly. |
+| R8 | **Manifest truthfulness** | Signing (§7) proves origin; probes and telemetry narrow the declared-vs-actual gap but sample it, never close it (spine C3: declared capability ≠ competence — and ≠ honesty). A provider can behave until it matters. | Enforcement independence (§4): a lying manifest meets the credential/egress/sandbox ceiling, which never trusted the manifest — and for effectful standard capabilities that ceiling is now the MVP floor (§4.1a), not a future wave. What a manifest *can* still buy is a better guarantee grade than it deserves, so the grade of a manifest-trusted axis is `declared` by construction and enforcement badges appear only on probe-backed axes (amendment A14). Blast radius of a malicious capability = its Grant plus whatever ambient authority it brought (R9). |
+| R9 | **Brought authority is outside the Grant tree** | I2 bounds authority the kernel *issued*. A component that already holds ambient OS credentials, file descriptors or network access did not receive them from a Grant, is not attenuated by one, and cannot be revoked through one. In V1 this covers all in-process code (§4.1a, row 3). | The enforcement floor converts brought authority into issued authority for effectful standard capabilities, and the isolation waves extend that to arbitrary providers (07-RUNTIME-ARCHITECTURE §8.2). Until then the claim for in-process code is auditability, not containment — stated in the invariant itself (§2.2 I2) rather than in a footnote, because an unqualified I2 would be exactly the overclaim A3 removed from the positioning. |
+| R10 | **Grant handles do not survive a process restart** | Authority is object identity in a kernel-private registry (§2.2 I1), so handles are process-scoped by construction. That is correct ocap behaviour — a restarted process must *re-obtain* authority rather than re-materialise it from a string — but the re-acquisition path for long-running executions is unspecified. | Open design question, carried from doc 20 §5. Constraints already fixed: re-acquisition MUST NOT be "present the journal's grant id" (that would reintroduce F-2 through the recovery door), and revocation that happened while the process was down MUST survive re-acquisition (R3). Resolution is required before the facade freeze (A4) can claim to cover crash-spanning sessions. |
 
-The honest summary: this design makes privilege escalation structural rather than
-probabilistic, makes injection a labeled-dataflow problem rather than a text-heuristic
-problem, and makes every effect attributable to a principal and a Grant lineage. It does not
-make the model trustworthy, and no mechanism in this document should be described as if it
-did. The kernel's promise is bounded blast radius with a complete audit trail — that is the
-whole promise, and it is enough to be worth building because (spine §6) nobody else owns it.
+The honest summary: **below the mediation waterline**, this design makes escalation of
+kernel-issued authority structural rather than probabilistic (§2, now executable and attacked —
+§2.6), makes injection a labeled-dataflow problem rather than a text-heuristic problem (§5),
+puts an OS boundary rather than good behaviour under every effectful standard capability from
+the MVP onward (§4.1a), and makes every effect attributable to a principal and a Grant lineage
+(§6). **Above the waterline**, it offers attestation, mirroring and audit, and each Binding
+records — per property, in a sealed and journaled grade — which of the two a given claim rests
+on (§7).
+
+It does not make the model trustworthy; it does not bound authority a component brought with it
+rather than received (R9); and no mechanism in this document should be described as if it did
+either. The kernel's promise is **bounded blast radius for issued authority, with a complete and
+non-forgeable audit trail, and an explicit grade wherever the bound is evidence rather than
+enforcement** — that is the whole promise. It is a narrower sentence than phase 1 wrote, and it
+is still enough to be worth building, because (spine §6) nobody else owns even the narrow
+version.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendments A2, A3, A6, A8 and A12 applied to the body, plus the executable results from
+`prototypes/kernel-semantics/` (docs 17/18/20). Nothing in this document should now state
+pre-review behaviour as current fact; superseded readings are retained only where the analysis
+that forced the change is instructive, and are marked as superseded at the point of use.
+
+**A8 — handles, not strings (with the executable forgery finding).**
+- §2.2 **I1 rewritten**: authority is *object identity in a kernel-private registry*, not a
+  "kernel reference" loosely described. Userland holds minted handles; journal grant references
+  are non-resolvable identifiers that confer nothing on a reader.
+- §2.2 I1 records **doc 20 F-2**: the reference kernel's first implementation *exported* its
+  `KERNEL_MINT` guard symbol, so any module could mint a valid handle for any grant id read off
+  a journal event — the guard was itself the forgery hole, and the implementation had committed
+  the knowing-a-string-is-authority sin this document criticises elsewhere. Fix and generalised
+  rule ("if authority can be reconstructed from data, it is a password, not authority") stated
+  in place; invariant I21 cited.
+- §2.5 diagram: nodes relabelled as handles; journal node added showing non-resolvable
+  references and the four grant event kinds; caption notes journaled refusals (F-3).
+- §6.1 principal table left intact; the identity of a Binding/Invocation is now consistently
+  described in handle terms in the surrounding text.
+
+**A6 — the MVP non-cooperative enforcement floor.**
+- New **§4.1a**, carrying the review's argument (middleware retrofits and an in-process-only V1
+  both bind cooperative code, so cooperative-only enforcement is not a differentiator), the
+  normative MVP requirement (effectful standard capabilities OS-sandboxed at tier `os` with
+  grant-scoped credentials and grant-scoped egress compiled *from the Grant*), what it makes
+  falsifiable (claim F7 for covered effect classes), and a three-row table scoping the
+  "auditability, not containment" caveat to **in-process strategy code and vetted in-process
+  capabilities only**.
+- §4.2: tier `os` named as the MVP floor rather than an opt-in; the satisfied tier is what earns
+  an `enforced` grade on the rights it bounds.
+- §8: new R9 (brought authority is outside the Grant tree) with the floor and isolation waves as
+  its posture; R8's posture updated to note the ceiling is now the MVP floor.
+- EXTEND named as the live fallback with its trigger (Wave-4/5 crossing-cost measurements).
+
+**A3 — advisory-grants resolved into guarantee grades.**
+- §4.1: the Implication's "flagged as advisory at bind time" replaced by grade sealing, with the
+  superseded phrasing retained and the reason it failed stated — "advisory" was doing two jobs
+  (negotiation property vs honesty property) and hid the enforced-but-unbacked case.
+- §4.1: new paragraph defining `enforced` / `observed` / `declared` in this document's terms,
+  including per-property grading and journaled demotion on evidence expiry.
+- §7: "Enforced vs. advisory claims" retitled and extended with the 2×3 table separating
+  `enforcement` from `guaranteeGrade`, naming the enforced-axis/`declared`-grade cell as the one
+  that must never be read as enforcement.
+- §7 closing: the mediation waterline stated explicitly for remote and provider-side domains,
+  with "wrapping does not raise the grade" and the A3 leading indicator.
+- §8 closing summary rewritten as a below-/above-the-waterline pair.
+
+**A12 — audit-grade allow path.**
+- §3.4: model-judge verdicts that gate an effect are **always** journaled with an input hash, in
+  every profile, with the reason the case is asymmetric (a deterministic allow trace is
+  reconstructible from journaled inputs; a model verdict is not, so an unrecorded one is
+  evidence that never existed). "Advisory-tier" clarified as governing what a judge may decide
+  alone, never whether the decision is recorded.
+- New **§3.5** *What the pipeline journals: the allow-path knob*, with the plane-per-class table
+  (refusals, verdict outcomes and judge verdicts always truth; allow traces advisory by default
+  and truth in the regulated profile), the defensibility argument for the default, and the two
+  cases that escape the knob in every profile. Cross-referenced to doc 08 §3.1 for event kinds.
+- §3.4 diagram updated to show both journaling behaviours.
+
+**A2 — reserve/settle/release.**
+- §2.1: "the kernel decrements budgets at commit" replaced by the reserve-at-admission /
+  settle-at-outcome / release-remainder lifecycle with its three event kinds, the durability
+  requirement before dispatch, and the superseded reading retained with the reason it failed.
+  Ceilings-not-reservations semantics added (doc 17 §9a; doc 20 F-7).
+- §3.4 diagram: the commit node no longer says "budget decrement"; admission now shows
+  `grant.reserved`, and commit shows `grant.settled` + `grant.released` in one atomic record.
+- §2.5 caption: ceilings, chain-wide admission, journaled denials.
+
+**Executable results recorded (docs 17/18/20).**
+- New **§2.2 I6** — the structural commit barrier as a security invariant: `InvokeCtx` is data,
+  effect proposals are the only channel to durable truth, a capability can neither append
+  authoritative events nor report success the commit gate rejects; delegation via proposal keeps
+  recursion bounded by authority. Phase-1's "capabilities hold a kernel handle" marked
+  superseded with the reasoning kept.
+- §2.2 heading: "five invariants" → "six invariants".
+- New **§2.6** — the attack-result table (malicious capability containment, no self-certification
+  past the gate, three handle-forgery attacks, delegation attenuation at depth, journaled
+  refusals, revocation surviving fork), the suite's scale, **and an explicit list of what the
+  suite does not establish** (ambient-authority confinement, anything above the waterline,
+  truthful effect-class declarations).
+- §2.2 **I3**: attenuation validates against the parent's *current* remaining state (F-3), and a
+  child's limit is a **ceiling, not a partition** — the ten-children/one-parent example and the
+  warning that a surface rendering a limit as reserved budget is misreporting it (F-7).
+- §2.2 **I4 corrected**: an invocation whose grant is revoked mid-flight is caught by the
+  commit-point authority re-check and lands `failed` (`authorization-revoked-post-hoc`) with its
+  reservation released and **no artifacts promoted**, while a landed external effect is still
+  journaled. The prior "transitions to `canceled` via cancellation propagation" reading is marked
+  superseded, with the auditor-facing reason the distinction matters.
+- §2.4: the escalation test's scope tied to I2's honest boundary.
+- §8 R3 marked **resolved** by doc 17 §8.2 (grants re-resolved at resume and fork; checkpoints
+  cannot resurrect revoked authority), with the residual moved to the new **R10** (grant handles
+  do not survive a process restart; the re-acquisition path is an open design question with two
+  constraints already fixed).
+
+**Scope note.** The document's opening goal sentence now reads "kernel-issued authority", with
+the qualifier unpacked at I2 rather than buried in the residual-risk table.
