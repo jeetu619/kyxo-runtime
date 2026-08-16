@@ -205,3 +205,45 @@ Worth recording, because these were the load-bearing claims:
 | Grant handles do not survive process restart (authority must be re-obtained) | MODERATE | Correct ocap behaviour, but the re-acquisition path is unspecified for long-running executions. **Open design question.** |
 | Kernel-crossing cost is still unmeasured | SERIOUS | Unchanged from phase 1; the in-process prototype cannot answer it. Blocks the isolation wave, not the record format. |
 | Single-execution ordering only; no cross-execution ordering guarantees | LOW | Deliberate (doc 17 §2); may surprise implementers expecting a global log. |
+
+---
+
+## 6. Findings from adversarial review #2 (2026-08-16)
+
+Five specialist reviewers attacked the executable kernel with their own scripts. They
+produced **17 FATAL, 34 SERIOUS and 9 MODERATE findings, 44 of which block the record
+format freeze**. Full record: `research/ADVERSARIAL-REVIEW-2.md`; decision and blocker
+taxonomy: `22-RECORD-FORMAT-FREEZE-DECISION.md`.
+
+Two were fixed immediately during the review, because they were the same class as F-6 and
+had working reproductions:
+
+### F-8 — A forked lineage was not reconstructable from its own journal
+**Found by:** the event-sourcing reviewer, with an end-to-end reproduction.
+**What happened.** `recover()` rebuilds each execution from *its own* journal records. A
+forked child's inherited state — cell, artifacts, effect index, protected effects, grants
+— came exclusively from the checkpoint blob at fork time and was never written to the
+child's journal. A restart therefore erased everything the fork inherited, and the same
+irreversible charge executed twice **while `checkInvariants()` reported zero violations**.
+The reviewer's framing is the important part: *for a forked lineage, the journal was not
+the source of truth, and the record format had no way to say so.*
+**Fix.** `fork()` now materializes inherited authority, effect identity and protected
+effects into the child's own first commit (`grant.inherited`, `effects.inherited`), with an
+attested snapshot reference and an inheritance digest.
+
+### F-9 — Terminal failure records omitted effect identity
+**Found by:** invariant I25 (added in response to F-8) on its first property run.
+**What happened.** Commit-gate and policy-denial failures journaled no `effectKey`, so
+those index entries could not be rebuilt after a restart.
+**Fix.** Every terminal invocation record now carries `effectKey`, `effectClass` and
+`landedExternal`.
+
+### The invariant that was missing
+Both F-6 and F-8 were instances of one class: **state held in memory that cannot be
+re-derived from durable records**. Invariant **I25** now asserts that the live projection
+equals the projection recovered from storage, sampled through the property suite and
+asserted in the fork tests. It found F-9 within one run of being added.
+
+**The remaining 42 blockers are catalogued, not fixed.** They are the specification for
+the next phase (doc 22 §4), and the honest summary is that the *semantics* largely
+survived while the *record format* did not.

@@ -133,7 +133,7 @@ than none.
 
 ```mermaid
 graph LR
-    subgraph W0G["Wave 0 — freeze, three surfaces + governance"]
+    subgraph W0G["Wave 0 — four co-equal workstreams"]
         W0A["Wire schemas v0<br/>envelope · manifest grammar ·<br/>lifecycle · checkpoint"]
         W0B["Frozen facade (A4)<br/>KernelApi / InvokeCtx / HarnessCtx<br/>+ conformance fixtures"]
         W0C["Governance (A5)<br/>Apache-2.0 + spec licence · DCO ·<br/>marks · spec process · neutral-home trigger"]
