@@ -1,0 +1,54 @@
+name: kernel-semantics
+
+# Fast gates run on every push: typecheck, invariants, seeded property tests.
+# Long fuzz runs are a separate manual/scheduled profile.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+jobs:
+  fast:
+    name: typecheck + semantics
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dev dependencies
+        working-directory: prototypes
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: prototypes
+        run: npx tsc --noEmit
+      - name: Architectural invariant — kernel must not branch on capability identity
+        working-directory: prototypes
+        run: node --experimental-strip-types --test kernel-semantics/tests/universality.test.ts
+      - name: Semantic test suite (crash, fork, dedup, grants, property, coverage)
+        working-directory: prototypes
+        run: node --experimental-strip-types --test kernel-semantics/tests/*.test.ts
+      - name: Phase-1 prototype gates
+        working-directory: prototypes
+        run: bash kernel/validate.sh
+
+  fuzz:
+    name: extended fuzz (scheduled/manual only)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - working-directory: prototypes
+        run: npm install --no-audit --no-fund
+      - name: Long seeded fuzz
+        working-directory: prototypes
+        env:
+          KYXO_FUZZ_SEEDS: '2000'
+          KYXO_FUZZ_LENGTH: '80'
+        run: node --experimental-strip-types kernel-semantics/fuzz.ts
