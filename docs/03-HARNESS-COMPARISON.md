@@ -1,9 +1,17 @@
 # 03 — Harness Comparison: Nineteen Systems, Thirty-One Dimensions
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A9(i). Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document was drafted before the adversarial
+> review; the review's binding adjudications live in the Amendment log of
+> `research/DESIGN-SPINE.md` (A1–A14), with the full findings in `research/ADVERSARIAL-REVIEW.md`.
+> They are now reflected in the body.
+> **Applied here:** A9(i) (note B1 rescoped to the seven source-inspected agents + Copilot-by-
+> platform-docs + this table's own Windsurf `n/e` cell — §2.2), plus the two consistency fixes
+> the confidence audit flagged: the PydanticAI cost-controls cell now reads **caps without
+> lineage** (§2.6, note F1, §4.1 row 1) and every capability-negotiation cell is labelled with
+> the **single information source** it carries (§2.5, note E2, §4.1 row 3). A2 and A13 are
+> referenced where they change what Kyxo adds beyond the surveyed field (notes F1, E2).
+> **Outstanding:** none. Where this document conflicts with the Amendment log, **the amendment
+> log governs**.
 
 
 Status: DRAFT for adversarial review. Written from `research/DESIGN-SPINE.md` (binding) and the
@@ -186,13 +194,18 @@ research/notes/coding-agents-landscape.md). Everyone else routes by static confi
 | Copilot cloud agent | FC (autopilot caps; pipeline†) | FC (platform plan phase) | ABS | BAS (Automations) |
 | Windsurf/Cascade | BAS† | BAS† | n/e | n/e |
 
-**B1.** Evidence — FACT/SOURCE-CODE OBSERVATION across research/notes/coding-agents-landscape.md
-and the vendor notes: zero of the coding harnesses contain a graph engine; every "plan mode"
-is a policy profile (tool filtering) over the same loop. Interpretation — the agent loop is
-commoditized; systems differ only in *continuation policy* (next-speaker LLM check, autopilot
-caps, mistake budgets, completion-tool contracts, judge middleware). Implication — the kernel
-exposes loop events and leaves continuation to harness behaviours (spine §5). Confidence —
-HIGH.
+**B1.** Evidence — scoped per amendment A9(i), which this table's own `n/e` cell forced:
+zero of the **seven source-inspected** coding agents contain a graph engine (SOURCE-CODE
+OBSERVATION/HIGH); the Copilot cloud agent shows none in its **documented pipeline** (FACT,
+platform docs); Windsurf/Cascade is press-level only and is rated `n/e` in the Graph-support
+column above — not evidenced either way, and therefore never counted as an absence. Every
+"plan mode" in the inspected set is a policy profile (tool filtering) over the same loop
+(research/notes/coding-agents-landscape.md and the vendor notes). Interpretation — the agent
+loop is commoditized; systems differ only in *continuation policy* (next-speaker LLM check,
+autopilot caps, mistake budgets, completion-tool contracts, judge middleware). Implication —
+the kernel exposes loop events and leaves continuation to harness behaviours (spine §5).
+Confidence — HIGH, unchanged: A9(i) narrows which systems the SCO label covers, not what the
+inspected ones contain. Docs 02 §2.4/§3.1 and 04 §2.A/§4.1 now state the identical triple.
 
 **B2.** The three FC/DIF workflow substrates (LangGraph, MAF, ADK) all compile their graph
 frontends onto a non-graph kernel (channels/BSP; executors/supersteps; nodes/event-log) —
@@ -287,7 +300,7 @@ Codex/Copilot cloud containers). Matches spine §8 "single-node first."
 |---|---|---|---|---|---|---|
 | Claude Code + SDK | FC | FC (4 transports; deferral; 25k spill) | ABS | BAS (skill descriptions; tool search) | ABS | DIF (skills/plugins/hooks/marketplaces; agentskills.io) |
 | OpenAI Agents SDK | FC (closed 13-type union — see E1) | FC (+hosted MCP) | ABS | BAS (`ToolSearchTool` deferral) | ABS | BAS (closed union: new venue = SDK change) |
-| Codex | FC (execpolicy, code-mode, dynamic tools) | FC (client + server) | ABS | BAS (`initialize` handshake; capabilities.rs) | BAS (App Server capability handshake) | FC (hooks, skills, plugins, connectors) |
+| Codex | FC (execpolicy, code-mode, dynamic tools) | FC (client + server) | ABS | BAS (`initialize` handshake; capabilities.rs) | BAS — **fragment, one source: handshake** (App Server `initialize`; protocol features only, no axes/tiers, no probe, no telemetry) | FC (hooks, skills, plugins, connectors) |
 | Cursor | FC† (per-model tool renaming) | FC | ABS | BAS (agent-requested rules; skills metadata) | ABS (per-model skinning done by humans) | FC (MCP/hooks/skills/ACP; core closed) |
 | ADK 2.x | FC (`process_llm_request` rewriting; toolsets) | FC (consume + expose agent as server) | FC (bidirectional, reference impl, experimental) | BAS (cards + listings at edges) | ABS | FC (plugins, processors, feature registry) |
 | LangGraph | EXT (ToolNode in prebuilt/LangChain) | EXT (adapters; platform exposes) | EXT (platform `/a2a`) | ABS | ABS | FC (channels, checkpointers + conformance, serde) |
@@ -299,10 +312,10 @@ Codex/Copilot cloud containers). Matches spine §8 "single-node first."
 | Mastra | FC | FC | ABS | ABS | ABS | BAS |
 | Letta | FC (uniform action space incl. `send_message`) | BAS | ABS | ABS | ABS | BAS |
 | OpenCode | FC (LSP fused into edit results) | FC | ABS | BAS | ABS | BAS (agents-as-config; ACP) |
-| Cline/Roo | FC (native tool-call parser) | FC | ABS | BAS | BAS (fail-closed provider operation manifests) | FC (modes, SDK layers, hub) |
-| Aider | ABS (edits are the output format) | BAS | ABS | ABS | BAS (per-model edit-format dialects, static) | BAS |
+| Cline/Roo | FC (native tool-call parser) | FC | ABS | BAS | BAS — **fragment, one source: declaration** (provider operation manifests, fail-closed; one-sided, untiered, never verified against behaviour) | FC (modes, SDK layers, hub) |
+| Aider | ABS (edits are the output format) | BAS | ABS | ABS | BAS — **fragment, one source: declaration** (per-model edit-format dialects, static catalog; chosen, not negotiated) | BAS |
 | Gemini CLI | FC (scheduler state machine per call) | FC | DIF (only system consuming *and* serving A2A in its class) | BAS | ABS | BAS |
-| Copilot cloud agent | FC (platform tools; virtual tool grouping (agent mode)) | FC | ABS | BAS | BAS (EditToolLearningService — empirical, per-model (agent mode)) | BAS |
+| Copilot cloud agent | FC (platform tools; virtual tool grouping (agent mode)) | FC | ABS | BAS | BAS — **fragment, one source: outcome telemetry** (`EditToolLearningService` windowed success bitsets per model×tool, agent mode; no declaration or probe layer to reconcile against) | BAS |
 | Windsurf/Cascade | BAS† | BAS | ABS† | n/e | n/e | BAS† (hooks) |
 
 **E1.** SOURCE-CODE OBSERVATION (HIGH): OpenAI's Tool union bakes execution venue (SDK
@@ -311,16 +324,27 @@ change (research/notes/openai-agents-sdk-codex.md). The counter-design is the sp
 capability manifest: venue, isolation, approval, discoverability as orthogonal attributes of
 one primitive.
 
-**E2.** Evidence — the field's four embryonic negotiation mechanisms: (i) static per-model
-dialects (Aider edit formats — SCO/HIGH); (ii) declaration fail-closed (Cline modality
-manifests — SCO/HIGH); (iii) handshake (Codex App Server `initialize` capabilities —
-SCO/HIGH, semantics MEDIUM); (iv) empirical outcome learning (Copilot
-`EditToolLearningService` windowed success bitsets per model×tool — SCO/HIGH).
-Interpretation — negotiation exists only in fragments, one information source each; nothing
-is two-sided, axis-typed, or tiered; MCP/A2A discovery lists but does not negotiate.
-Implication — spine H2/H4 and doc 06: the Kyxo contract must combine all three information
-sources (declaration, probe, telemetry) because each fragment above proves one of them
-necessary. Confidence — HIGH.
+**E2 (the negotiation-column reconciliation).** Evidence — four BASIC cells, and each is a
+**fragment carrying exactly one information source**, which is why none of them is rated
+above BASIC and why the spine's gap map (§6, gap 3) can say "nothing negotiates today"
+without contradicting this table:
+
+| Fragment | Its one information source | What it cannot do |
+|---|---|---|
+| Aider per-model edit-format catalog (SCO/HIGH) | **declared** (static, one-sided) | verify the declaration; adapt on failure; express tiers |
+| Cline/Roo provider operation manifests, fail-closed (SCO/HIGH) | **declared** (static, one-sided) | negotiate — it refuses rather than degrades or intersects |
+| Codex App Server `initialize` capabilities (SCO/HIGH; semantics MEDIUM) | **declared**, exchanged two-sidedly at the *protocol* layer | say anything about model-interaction axes; no tiers, no probes |
+| Copilot `EditToolLearningService` (SCO/HIGH, agent mode) | **observed outcome telemetry** | state a contract up front; gate eligibility before spend |
+
+Interpretation — the field has fragments of two of the three information sources C3 requires
+(declared, probed, observed). **Probing is at zero instances**: no surveyed system executes a
+capability probe and caches the result as evidence. Nothing is two-sided *and* axis-typed
+*and* tiered; MCP/A2A discovery lists but does not negotiate. A BASIC rating here means "one
+source, no intersection", not "partial negotiation". Implication — spine H2/H4 and doc 06:
+the Kyxo contract must combine all three sources, and must supply the missing one itself,
+because each fragment above proves exactly one of them necessary and none proves it
+sufficient. Per amendment A13, the combined result gates **eligibility**; choosing among
+eligible candidates is a separate routing-strategy contract. Confidence — HIGH.
 
 ### 2.6 Family F — governance
 
@@ -335,7 +359,7 @@ necessary. Confidence — HIGH.
 | MAF | DIF (typed request ports persisted in checkpoints) | DIF (approval rules + FIDES IFC — field's only deterministic taint enforcement, opt-in) | FC (Hyperlight WASM; Monty interpreter) | BAS (function-invocation budget in harness) |
 | AutoGen (legacy) | BAS (UserProxy pattern) | BAS (InterventionHandler on the bus) | n/e | ABS |
 | CrewAI | BAS (`@human_feedback`, LLM-interpreted) | ABS (RBAC only in proprietary AMP) | ABS | BAS (usage metrics, tool `max_usage_count` — mostly measurement) |
-| PydanticAI v2 | BAS (via graph iteration/persistence + durable engines) | ABS (UsageLimits is budget, not policy) | ABS | FC (UsageLimits: tokens/requests/tool-calls/spend; `usage=ctx.usage` accrual — caps, not lineage; see F1) |
+| PydanticAI v2 | BAS (via graph iteration/persistence + durable engines) | ABS (UsageLimits is budget, not policy) | ABS | FC — **caps without lineage** (UsageLimits: tokens/requests/tool-calls/spend, enforced per run; delegation accrual is manual via `usage=ctx.usage` and is *lost* across a durability boundary; no attenuation, no per-branch attribution; see F1) |
 | LlamaIndex WF | FC (InputRequired/HumanResponse events first-class in validation) | ABS | ABS | ABS |
 | Mastra | DIF (`suspendSchema`/`resumeSchema` typed suspension — spine's Invocation pattern) | ABS | ABS | ABS |
 | Letta | ABS | ABS (server auth; partial tool rules) | BAS (letta-code harness options) | BAS (block char limits; token accounting) |
@@ -346,14 +370,26 @@ necessary. Confidence — HIGH.
 | Copilot cloud agent | FC (draft-PR-only; human-gated CI; requester-cannot-approve) | DIF (enforcement at credential/platform layer: branch-scoped tokens, firewall) | FC (ephemeral Actions VM + egress firewall) | n/e |
 | Windsurf/Cascade | BAS† | n/e | n/e | n/e |
 
-**F1.** Evidence — the entire cost-controls column: ten ABS/n-e cells; the best shipped
-surfaces are one retrofitted tree-wide USD cap (Claude Code), per-run caps with manual
-delegation accrual (PydanticAI), one integer (`max_llm_calls`, ADK), and tracking without
-enforcement (CrewAI, Cline). Interpretation — budgets are universally bolted on; nowhere are
-they an attenuable, hierarchical resource with lineage; the closest thing to attenuation is
-Claude Code's tree-wide cap plus non-relaxable permission-mode inheritance. Implication —
-spine gap 1 and the Grant object (§3.7) are confirmed as the field's largest open surface;
-doc 08 carries the enforcement semantics. Confidence — HIGH.
+**F1 (the cost-controls reconciliation).** Evidence — the entire cost-controls column: ten
+ABS/n-e cells; the best shipped surfaces are one retrofitted tree-wide USD cap (Claude Code),
+**caps without lineage** (PydanticAI UsageLimits: real enforcement per run, but delegation
+accrual is hand-carried in user code via `usage=ctx.usage`, and Temporal's activity boundary
+copies the context so a child agent's spend is silently never charged to the parent — FACT,
+research/notes/durable-execution.md §2), one integer (`max_llm_calls`, ADK), and tracking
+without enforcement (CrewAI, Cline). Interpretation — the FIRST-CLASS rating on the
+PydanticAI cell measures the *cap* mechanism, which is genuinely designed, contract-bearing
+and load-bearing for the framework; it does **not** measure lineage, of which there is none.
+Budgets are universally bolted on and nowhere an attenuable, hierarchical resource with
+lineage; the closest thing to attenuation is Claude Code's tree-wide cap plus non-relaxable
+permission-mode inheritance. This is the whole of the apparent tension with spine gap 1 — the
+gap is lineage, not caps, and one FC cell in this column is therefore consistent with "budgets
+as resource lineage are absent everywhere". Implication — spine gap 1 and the Grant object
+(§3.7) are confirmed as the field's largest open surface. Enforcement semantics live in doc 08
+and are now **reserve-at-lease / settle-at-outcome / release-remainder** per amendment A2:
+what Kyxo adds beyond a cap is (a) reservation before dispatch, so exhaustion is detectable
+before spend, (b) settlement at outcome against every ancestor grant, so a child's spend
+cannot be lost at a boundary the way PydanticAI's is, and (c) attenuation as construction.
+Confidence — HIGH.
 
 **F2.** Evidence — Copilot cloud enforces at the credential and network layer (push
 restricted to `copilot/*` branches by credential design; default-on firewall; draft-PR-only —
@@ -569,9 +605,9 @@ whose best cell tops out at BASIC or at a single opt-in FIRST-CLASS:
 
 | Spine gap | Matrix evidence | Best-in-field, and why it falls short |
 |---|---|---|
-| 1. Grants: hierarchical budgets + authority with attenuation | Cost controls column: 10 of 19 ABS/n-e | PydanticAI UsageLimits (caps per run, manual accrual on delegation); Claude Code tree-wide USD cap (retrofitted, one currency). No lineage, no attenuation-on-delegation as construction |
+| 1. Grants: hierarchical budgets + authority with attenuation | Cost controls column: 10 of 19 ABS/n-e | PydanticAI UsageLimits — **caps without lineage** (real per-run enforcement; delegation accrual hand-carried and lost at a durability boundary); Claude Code tree-wide USD cap (retrofitted, one currency). No lineage, no attenuation-on-delegation as construction, and no reservation before dispatch (note F1) |
 | 2. Verification at the commit point | Verification column: strong at two altitudes, empty in the middle (note G2) | Copilot's institutional pipeline gates *PR promotion*, not the agent's own record; Mastra scorers observe, never block; MAF judges terminate loops, never gate commits |
-| 3. Axis-typed capability negotiation | Negotiation column: 4 BASIC fragments, 15 ABS (note E2) | Each fragment carries exactly one information source (declaration, handshake, or telemetry); none is two-sided or tiered |
+| 3. Axis-typed capability negotiation | Negotiation column: 4 BASIC fragments, 15 ABS (note E2) | Each fragment carries **exactly one** information source — three declared (Aider, Cline/Roo, Codex handshake), one observed telemetry (Copilot); **probing is at zero instances**. None is two-sided *and* axis-typed *and* tiered, and none intersects sources |
 | 4. Structural provenance/taint | No dedicated column; surfaced under permissions/context: MAF FIDES (opt-in middleware), Claude Code subagent-output pattern-scanning (retrofit), ADK/MAF attribution markers (annotations) | FIDES is deterministic and real but per-framework and opt-in; nobody makes labels a runtime invariant |
 | 5. Portable execution record | Every system has a log or checkpoint format — JSONL transcripts (CC), rollout JSONL (Codex), Event log (ADK), channel checkpoints (LG), definition-scoped checkpoints (MAF), RunState (OAI, "supported schema versions" lists) — all proprietary and version-bound | LangGraph is the only one that conformance-tests its storage interface; none publishes an interchange format |
 | 6. Delegation attenuation / recursion control | Subagents commoditized (note C1); recursion column mostly BAS/uncapped | Claude Code's depth/concurrency env vars + non-relaxable mode inheritance are the ceiling — convention plus two knobs, not construction |
@@ -714,9 +750,37 @@ Per METHODOLOGY: no LOW-confidence observation about a proprietary system is loa
   Copilot (source) and Aider (source).
 - Press-level only (all cells †/n-e; excluded from findings except as corroboration):
   Windsurf/Cascade.
-- Known tensions for the adversarial review to attack: (i) PydanticAI cost controls rated FC
-  while the spine's gap 1 says budgets are absent everywhere — reconciled here as "caps
-  without lineage," but the wording must stay consistent across docs; (ii) four BASIC cells
-  in the negotiation column versus the spine's "nothing negotiates today" — reconciled as
-  fragments, each carrying one information source; (iii) the PydanticAI A2A cell is rated
-  ABSENT on absence of evidence in our note, not on verified absence in the project.
+- Tensions raised for the adversarial review, and their disposition (2026-08-16, phase 2):
+  (i) PydanticAI cost controls rated FC while the spine's gap 1 says budgets are absent
+  everywhere — **resolved**: the cell, note F1, and the §4.1 gap row all now read **"caps
+  without lineage"**, and the rating is stated to measure the cap mechanism, not lineage;
+  the same wording is used in the spine's gap map and in doc 02 §5 row 1.
+  (ii) four BASIC cells in the negotiation column versus the spine's "nothing negotiates
+  today" — **resolved**: every negotiation cell is now labelled with the single information
+  source it carries, note E2 tabulates the four fragments and records that probing is at zero
+  instances, and doc 02 §5 gap 3 carries the identical framing.
+  (iii) the "zero of eight coding agents" breadth claim versus this table's own `n/e`
+  Windsurf Graph-support cell — **resolved by amendment A9(i)**: note B1 and docs 02/04 are
+  rescoped to the seven source-inspected systems plus Copilot-by-platform-docs, with Windsurf
+  an abstention. This table's cell was already correct and is what forced the amendment.
+  (iv) the PydanticAI A2A cell is rated ABSENT on absence of evidence in our note, not on
+  verified absence in the project — **open**, and the honest reading is `n/e`; left as ABS
+  pending a re-check of the project, since no finding depends on it.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendment reconciliation against `research/DESIGN-SPINE.md` A1–A14. Edits were surgical: no
+rating was changed, and no finding in §4 moved. What changed is what the cells and notes
+*say* a rating means, so that this matrix, doc 02's gap map and the spine agree word for word.
+
+| Amendment | Change |
+|---|---|
+| **A9(i)** | §2.2 note B1: "zero of the coding harnesses contain a graph engine (FACT/SCO)" replaced by the scoped triple — zero of the **seven source-inspected** agents (SCO/HIGH), Copilot cloud agent's **documented pipeline** shows none (FACT, platform docs), Windsurf `n/e` and never counted as an absence. The note now states that this table's own `n/e` Graph-support cell is what forced the amendment, and points at the matching text in docs 02 and 04. The Windsurf Graph-support cell itself was already correct and is unchanged. Confidence stays HIGH. |
+| **Consistency: cost controls** | §2.6 PydanticAI cost-controls cell restated as **FC — caps without lineage**, spelling out per-run enforcement, manual `usage=ctx.usage` delegation accrual, and loss across a durability boundary. Note F1 rewritten to say explicitly that the FC rating measures the *cap* mechanism and not lineage, so one FC cell is consistent with spine gap 1; the Temporal×PydanticAI accounting loss is cited as the FACT that makes the distinction concrete. §4.1 gap row 1 aligned to the same phrase. §5 tension (i) marked resolved. |
+| **Consistency: negotiation** | §2.5 Codex / Cline-Roo / Aider / Copilot negotiation cells each annotated with the **one information source** they carry (handshake-declared, declared, declared, observed telemetry) and what that source cannot do. Note E2 rewritten as the reconciliation anchor with a four-row fragment table, plus the sharper finding that **probing is at zero instances** across the field. §4.1 gap row 3 aligned. §5 tension (ii) marked resolved. |
+| **A2** | Referenced in note F1 only, to name what Kyxo adds beyond a cap: reserve-at-lease / settle-at-outcome / release-remainder, with reservation durable before dispatch and settlement against every ancestor grant. No decrement-at-commit language appears in this document. |
+| **A13** | Referenced in note E2: the combined three-source contract gates **eligibility**; selection among eligible candidates is a separate routing-strategy contract. |
+| **A9(ii)** | No occurrence — the Realtime/Live lowering claim is not made in this document. |
+| **A1, A3–A8, A10–A12, A14** | No occurrence. This document rates external systems; it states no Kyxo mechanism those amendments changed. |

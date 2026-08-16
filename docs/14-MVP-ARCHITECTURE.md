@@ -12,8 +12,9 @@
 > roster canonical including Gemini; this document's deferral labels rewritten in doc 15's canonical
 > wave numbers — §2, §2.2), A13 (selection contract: schema at Wave 0, telemetry ranking at Wave 3 —
 > §2.1, §5.4), A14 (catalog scope: conformance-derived manifests for the four MVP adapters only —
-> §2.1, §2.2), plus A9's evidence relabelling of the two claims this document carried (§1, §2.2).
-> **Outstanding:** none known.
+> §2.1, §2.2), plus A9's evidence relabelling of the two claims this document carried (§1, §2.2) and
+> incidental alignment with A8, A10 and A11 where the storage sketch and the scope table would
+> otherwise have contradicted them (§2.1, §3.2). **Outstanding:** none known.
 > Where this document conflicts with the Amendment log, **the amendment log governs**.
 >
 > **Executable semantics supersede prose.** The invocation lifecycle, the commit barrier, effect
@@ -454,3 +455,136 @@ Two failure modes deserve prose because they are the sneaky ones.
 The honest summary of the MVP's epistemic role: Phases 36–37 cannot *prove* the hypothesis — universality claims are only ever falsified or survived. What the MVP can do is put all eight claims in a position where surviving is informative: four adapters spanning the genuinely divergent paradigms (research/notes/open-model-infrastructure.md §10), four strategies spanning the observed orchestration space (research/notes/coding-agents-landscape.md §1), death-by-SIGKILL at every boundary, budgets that are either reserved before dispatch and settled at outcome in the same transaction as truth or demonstrably not, and — since amendment A6 — a bound on effects that a capability cannot opt out of by declining to call the kernel. That last item is what keeps F7 from being a claim any cooperative middleware could also make. If the kernel is wrong, this MVP is designed to find out in weeks, not after a distributed system is built on top of it.
 
 One class of doubt has already been discharged ahead of the MVP rather than inside it. The interaction of journal, checkpoint, fork and deduplication — the semantics that make D3, D5 and D8 meaningful — was written as an executable property-test spec and **built**: `prototypes/kernel-semantics/` with normative prose in `17-KERNEL-SEMANTICS.md`, checked invariants in `18-KERNEL-INVARIANTS.md`, and results in `20-SEMANTIC-TEST-RESULTS.md` (39 tests, 9,300 invariant evaluations per full run, plus 70,000 fuzz operations, all passing; five real defects found and fixed in the process, including a fork that absorbed an inherited irreversible effect as a silent cache hit). Amendment A1 made that spec a Wave-0 exit gate precisely because a coherent answer might not have existed — ADR-002 would have reopened. It exists, and the MVP inherits the semantics rather than inventing them under demo pressure.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendments A1, A3, A4, A5, A6, A7, A13 and A14 applied to the body, with A2's replacement of
+decrement-at-commit finished (the phase-1 banner claimed A2 was applied; five sites still said
+"decrement"), and A9's two mislabeled evidence claims corrected where this document carried them.
+The document is reconciled against `15-IMPLEMENTATION-ROADMAP.md` per A7 and against the executable
+semantics in `prototypes/kernel-semantics/` (docs 17, 18, 20). Superseded reasoning is retained
+where it is the evidence for a change and marked at the point of use; nothing here now states
+pre-amendment behavior as current fact.
+
+**A1 — lineage-scoped, content-inclusive effect identity; mandatory fork dispositions.**
+- §1 F6: "idempotency keys + leases" → content-inclusive effect keys with **lineage-scoped**
+  identity; resume-vs-fork distinguished; falsification extended to an undispositioned fork and to
+  an inherited irreversible effect returned as a silent cache hit (doc 20 F-1).
+- §2.1 kernel row: `uncertain` added to the transition algebra; content-inclusive lineage-scoped
+  effect keys; the bounded reliability dedup window kept explicitly distinct from the content-keyed
+  replay cache (A11).
+- §3.2: `invocations` keyed `UNIQUE(execution_id, effect_key)` with `effect_class` and `lease_epoch`
+  columns; `checkpoints` gains `cut_seq`, `protected_effects_json`, `dedup_window_json`, and
+  pending invocations carrying class and lease epoch; the checkpoint prose now says the snapshot is
+  an accelerator that resume re-folds and compares against.
+- §3.3 D3: "memoizes correctly (uuid5 identity dedups)" → replay from the content-keyed cache, with
+  the point that changed arguments under an unchanged call site must re-execute.
+- §3.3 D5 + its sequence diagram: recovery triage is by **effect class**; safe classes re-lease,
+  unsafe classes land `uncertain` and require an explicit journaled disposition.
+- §3.3 D8: fork now requires a disposition per pending invocation, a new execution identity, an
+  `execution.forked` first event, and an untouched parent lineage.
+- §4 criterion 6: pass condition extended to uncertainty representation and fork dispositions.
+- §6 closing: the Wave-0 property-test gate recorded as **built and passing**, with the volume and
+  the five falsifications, and the note that ADR-002 would have reopened had it not been writable.
+
+**A2 — reserve-at-lease / settle-at-outcome / release-remainder (completing an incomplete pass).**
+- §1 F7: claim and falsification restated in reserve/settle terms (durable reservation before
+  dispatch; settlement at outcome; no batching that decouples settlement from the outcome event).
+- §2.3 SQLite paragraph: the commit transaction now names the reservation/settlement transition, and
+  a new paragraph states there are two accounting points per invocation rather than one.
+- §2.3 Implication: "Decrement-at-commit inside the event transaction is affordable" explicitly
+  marked **superseded by A2** and retained — it is the analysis that licensed keeping accounting
+  inside the transaction at all, and the same analysis licenses two points instead of one.
+- §3.1 diagram: policy pipeline stage relabeled "budget reserve/settle".
+- §3.2 `grants`: `*_remaining` columns replaced by `limits_json` / `reserved_json` / `settled_json`
+  with the remaining-budget formula, and the doc-17 §9a note that limits are chain-enforced ceilings
+  rather than partitioned allocations.
+- §3.3 D5 diagram: "COMMIT tx: event + state + grant decrement" → `grant.reserved` before dispatch,
+  `grant.settled` + `grant.released` at outcome.
+- §3.3 D6: pass condition now checks settled totals, matching reserve→settle/release triples, no
+  orphaned reservations after recovery, and exhaustion detected at admission before spend.
+- §4 criterion 9 and §5.3 metrics (Tokens, Cost) restated; in-flight exposure reported separately
+  from settled spend.
+
+**A3 — guarantee grades and honest positioning.**
+- New §2.0 *Who V1 is for*: the grade triple (`enforced` / `observed` / `declared`), the mediation
+  waterline, and the three named V1 target segments — self-hosted/open-model stacks,
+  regulated/air-gapped deployments, local-first products — plus the R5 leading indicator (share of
+  effectful journal events originating in remote/delegated domains).
+- §1: a third scope note on falsifiability — every claim is scoped by the grade of the property it
+  touches; an `observed`-grade property cannot falsify or vindicate F7.
+- §2.1 kernel row: grades sealed on every Binding. §3.2 `bindings`: `guarantee_grades_json`.
+- §5.4: selection can never launder a grade.
+- §5.5: the waterline indicator added to what V1 measures.
+
+**A4 — facade freeze.**
+- §2.1: new **Kernel facade** row — the Wave-0 frozen, versioned, conformance-tested
+  `KernelApi` / `HarnessCtx` / `InvokeCtx` contract, with `InvokeCtx` data-only.
+- §2.2 Python SDK row: portability mechanism restated as the wire schema *and* the facade.
+- §3.1 diagram: the facade drawn as the sole path from CLI/strategies into the kernel.
+- §4 criterion 7: extensibility now also requires that neither post-freeze addition needed a new
+  facade verb, with facade fixtures running in the same CI job as the wire-schema fixtures.
+
+**A5 — governance workstream.**
+- New §2.1a: licensing (Apache-2.0 + open spec licence), DCO, trademark and conformance-mark
+  policy, published spec process with named maintainers, and the pre-committed neutral-home
+  trigger — as a Wave-0 precondition of the MVP, with the community catalog routed through it and
+  a pointer to the new risk R11 in doc 15.
+
+**A6 — the MVP non-cooperative enforcement floor.**
+- §1 F7: the floor written into the claim, and into the falsification condition via D9.
+- §2.1 standard-capabilities row: shell and HTTP OS-sandboxed with grant-scoped credentials and
+  egress, compiled from the Grant.
+- §2.2 WASM row: deferral **narrowed** — what is deferred is WASM and the extension of the boundary
+  to arbitrary providers, not enforcement itself.
+- §2.3: new defended scope decision explaining why the floor moved into the MVP (a retrofit and a
+  cooperative-only V1 are not distinguished by calling one of them a kernel), what stays deferred,
+  and the accepted counter-cost.
+- §3.1 diagram: the floor drawn as a mandatory stage between the kernel and effectful capabilities.
+- §3.3: new demo **D9** — a capability that never calls a kernel verb attempts jail escape, egress
+  beyond the allowlist, credential exfiltration and unaccounted spend.
+- §4 criterion 9: probes must fail closed *including* those run by non-cooperative code.
+- §6: new failure mode **X9** with its redesign trigger, including the A6-defined EXTEND fallback.
+
+**A7 — MVP/roadmap reconciliation.**
+- §2: the three-wave preamble replaced by doc 15's canonical Waves 0–5, a mapping table, and the
+  statement that this document's MVP is Waves 0–3 with Phase 37 as the Wave-3 matrix runner.
+- §2.2: every deferral label rewritten in canonical wave numbers (A2A server → 5; distribution →
+  beyond 5, unscheduled; WASM → 5 with boundary extension at 4 and the floor at 2/MVP; memory tiers
+  → 5; registry → 5; realtime → 5; benchmark UI → 5 at the earliest; Python SDK → 5, Rust kernel
+  unscheduled), with a header note that the old labels were a different scale.
+- §2.1 adapters row: the roster marked canonical per A7 (Anthropic Messages, OpenAI Responses,
+  Gemini, one OpenAI-compat adapter with vLLM and Ollama manifests) — the roster doc 15's Wave 2
+  has been corrected to match. §3.1 diagram subgraph relabeled. §4 criterion 1 names the four.
+
+**A13 — selection contract.**
+- §1 F5: negotiation gates eligibility; selection is a userland routing strategy with a journaled
+  rationale, and an unexplainable selection is a falsification.
+- §2.1: new **Selection** row — contract and `TelemetryView` schema frozen at Wave 0, V1 default
+  strategy (declared preference order + probe freshness), telemetry ranking at Wave 3.
+- §3.2 `bindings`: `selection_json` (chosen, rejected, rationale).
+- §5.4: new paragraph on where telemetry is allowed to act, including why an adaptive router would
+  confound the matrix the benchmark exists to measure.
+
+**A14 — curation economics.**
+- §2.1 adapters row: the four MVP adapters are the entire set for which V1 ships conformance-derived
+  manifests.
+- §2.2 registry row: the community catalog named as a governance deliverable, not a kernel promise.
+- §4 criterion 2: probe-backed axes must trace to a retained probe Evidence artifact; everything
+  else is labeled `declared`.
+
+**A9 — evidence relabeling (this document carried both mislabeled claims).**
+- §1 Evidence: "zero of eight competitive coding agents" → zero of the **seven source-inspected**
+  (SOURCE-CODE OBSERVATION/HIGH), Copilot's cloud agent by documented pipeline (FACT), Windsurf not
+  evidenced.
+- §2.2 realtime row: "sessions cannot be lowered onto request/response (FACT/HIGH)" →
+  **INFERENCE/HIGH** grounded in transport FACTs, with the note that the methodology has no
+  label-elevation mechanism.
+
+**Incidental alignment with amendments assigned elsewhere.** §3.2's schema also reflects A8 (journal
+grant references are non-resolvable identifiers; authority is handle identity) and A10 (suspension
+`origin`; artifact provenance recorded per producing invocation even when CAS dedups the bytes;
+ArtifactMeta label), because leaving the SQL contradicting them would have re-introduced the
+inconsistency this pass exists to remove.

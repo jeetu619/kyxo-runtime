@@ -1,9 +1,26 @@
 # 15 — Implementation Roadmap
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1, A3, A4, A5, A6, A7, A13, A14. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document predates the adversarial review; the
+> review's binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14),
+> with the full findings in `research/ADVERSARIAL-REVIEW.md`. They are now reflected in the body.
+> **Applied here:** A1 (the executable property-test spec of journal/checkpoint/fork/dedup as a
+> Wave-0 exit gate — **since built and passing**, §2 Wave 0, §4), A2 (reserve/settle/release,
+> §2 Wave 1), A3 (guarantee grades frozen at Wave 0, graded at Wave 2; the waterline indicator on
+> risk R5), A4 (the facade freeze joins the schema freeze in Wave 0), A5 (the governance workstream
+> in Wave 0, with risk R11), A6 (the enforcement floor ships with the capability tier in Wave 2, not
+> the hardening wave; risk R12), A7 (this document's wave numbering is canonical; **Wave 2's adapter
+> roster corrected to doc 14's** — Anthropic Messages, OpenAI Responses, Gemini, one OpenAI-compat
+> adapter carrying vLLM *and* Ollama manifests), A13 (selection contract and telemetry schema frozen
+> at Wave 0, ranking in Wave 3), A14 (catalog scope: conformance-derived manifests for the four MVP
+> adapters only; the community catalog is a governance deliverable — Wave 2, Wave 5, risk R6).
+> **Outstanding:** none known.
+> Where this document conflicts with the Amendment log, **the amendment log governs**.
+>
+> **Executable semantics supersede prose.** The Wave-0 semantic gate has been discharged ahead of
+> schedule: `prototypes/kernel-semantics/` with normative prose in `docs/17-KERNEL-SEMANTICS.md`,
+> checked invariants in `docs/18-KERNEL-INVARIANTS.md` and results in
+> `docs/20-SEMANTIC-TEST-RESULTS.md`. Two risks in §4 are retired by that evidence and the residual
+> risks that survive it are stated explicitly rather than left implied.
 
 
 Status: DECIDED (pre-adversarial-review). Covers mission Phases 30 (waves), 31 (deployment
@@ -42,7 +59,8 @@ undifferentiated machinery and, worse, put us in maintenance competition with ec
 | Workflow engine | **BUILD-as-strategy** (graph/workflow runner is userland over the kernel); explicitly **NOT ADOPT Temporal for the kernel**; **INTEGRATE later**: document hosting Kyxo cells under external durable engines | See the full block below. | We rebuild journaling machinery Temporal has hardened for a decade. Bounded by scope: single-node, leases, idempotency keys, no mesh — and the INTEGRATE path is the hedge if our durability layer stalls. |
 | Tracing | **ADOPT OpenTelemetry** (export-only) | OTel is the only observability surface every studied system converges on: MCP reserves `traceparent`/`tracestate`/`baggage` in `_meta` (SEP-414), A2A delegates observability to W3C Trace Context/OTel by documentation, Temporal ships a replay-safe OTel tracer (FACT, mcp-protocol.md §4; a2a-protocol.md F-vocab; durable-execution.md vocab). Spine §2: observability is a *projection of the journal*, never a second event bus. | GenAI semantic conventions still moving. Keep the exporter a thin projection so semconv churn touches one module. |
 | Model APIs | **WRAP provider SDKs; BUILD model adapters** | Model interaction paradigms diverge on 16 axes; LCD flattening fails loudly (Gemini signature 400s, DeepSeek `reasoning_content` 400s) and silently (dropped reasoning measurably degrades results) (FACT/OBSERVED BEHAVIOR, research/notes/open-model-infrastructure.md §5, §10). The adapter — encode/decode + manifest + opaque carry-through — is kernel-adjacent product surface; the raw HTTP client is not. | Adapter maintenance burden tracks provider drift (parser breakage across DeepSeek v3→v3.2 is documented — open-model-infrastructure.md OQ2). Mitigation: probe suite + outcome telemetry detect drift before users do; see risk R6. |
-| Sandbox | **ADOPT OS primitives** (seatbelt, Landlock/seccomp, AppContainer) + **EXTEND Codex/Claude-Code patterns** (policy-tiered escalation, approval-gated escape); **DEFER WASM** | Competitive coding agents shipped working OS-primitive sandboxes with policy tiers (spine H1/H2 evidence base); WASM component hosting is the declared extension path (spine §8) but its crossing-cost question is deliberately deferred to the wave that measures it (Wave 5 spike). | Platform fragmentation (three OS mechanisms, three behaviors); sandbox tiers must be conservative-by-default or they become theater. |
+| Sandbox | **ADOPT OS primitives** (seatbelt, Landlock/seccomp, AppContainer) + **EXTEND Codex/Claude-Code patterns** (policy-tiered escalation, approval-gated escape); **DEFER WASM**. **Schedule moved forward by amendment A6:** the OS-sandbox enforcement floor under shell and HTTP ships **with the capability tier in Wave 2**, not in the Wave-4 hardening pass | Competitive coding agents shipped working OS-primitive sandboxes with policy tiers (spine H1/H2 evidence base); WASM component hosting is the declared extension path (spine §8) but its crossing-cost question is deliberately deferred to the wave that measures it (Wave 5 spike). A6's reason for pulling the floor forward: until an effectful capability is bounded by something it cannot decline to call, the grant claim (F7 in doc 14) is a claim about cooperative code — which is exactly what a middleware retrofit into LangGraph or MAF already offers, so shipping without it would leave the BUILD case resting on a discriminator the review retracted. | Platform fragmentation (three OS mechanisms, three behaviors); sandbox tiers must be conservative-by-default or they become theater. Pulling the floor into Wave 2 also front-loads the credential-proxy and egress-allowlist machinery, which is new risk surface in the wave that already carries adapter fidelity — priced in R12. |
+| Licensing, governance and marks | **ADOPT standard instruments; BUILD nothing** — Apache-2.0 for code, an open specification licence for schemas/fixtures/facade, DCO, an existing-practice spec-change process, and a foundation home on a pre-committed trigger | Amendment A5 makes governance a Wave-0 deliverable with the same priority as the schema freeze, and none of it is product surface: every instrument here has a well-tested off-the-shelf form, and inventing bespoke ones would signal exactly the unilateral ownership that would keep the record format from being adopted as a format. MCP and A2A both ended in foundation homes (FACT); deciding our trigger before we need it is free now and expensive later. | Governance is cheap to write and expensive to mean: a conformance mark nobody withholds is decoration, and a spec process without named maintainers is a README. Kill-signal and tracking in R11. |
 | Auth | **ADOPT OAuth 2.1 libraries** | MCP mandates OAuth 2.1 RS + RFC 9728/8707/9207 + CIMD, with DCR already deprecated (FACT, mcp-protocol.md §11); A2A declares OpenAPI-style schemes at the HTTP layer (FACT, a2a-protocol.md F9). Hand-rolling auth is a security anti-decision. | CIMD is still a draft; auth extension churn (EMA, client-credentials ext). Confine to the edge; Grants — our authority model — are kernel-internal and unrelated to wire auth. |
 | Container runtime | **DEFER** | Execution environments are leasable capabilities (spine §2); V1 is single-node with process sandboxes. Container/VM environments arrive as capability providers, not kernel features. | None material in V1; the deferral is cheap because the environment contract is already a manifest. |
 | Vector DB | **DEFER** | Retrieval is a capability; memory is labeled state cells (spine §5). The kernel owns neither embeddings nor indexes. Embed/rerank are first-class *invocation profiles* (spine §4), which is all the kernel needs to know. | Ecosystem expectation mismatch ("where's the RAG?"); answered by docs 09-CONTEXT-AND-MEMORY positioning, not code. |
@@ -102,32 +120,60 @@ Confidence    — HIGH.
 
 ## 2. Implementation waves (Phase 30)
 
-Six waves, 0–5. Each wave ends in something usable and testable on its own; no wave's exit
-criteria depend on a later wave. The two standalone-value bets are deliberate: Wave 0's
-frozen record format is publishable without any kernel (spine §6.5 — durable execution has no
-MCP-equivalent), and Wave 2's manifest catalog + probe suite is usable by people who never
-run Kyxo (open-model-infrastructure.md, Implication 10: nobody negotiates today; accurate
-manifests for the top targets are immediate value).
+Six waves, 0–5. **This numbering is canonical** (amendment A7): where `14-MVP-ARCHITECTURE.md`
+previously staged deferrals on a different three-wave scale, its labels have been rewritten in
+these terms, and the MVP of that document is Waves 0–3. Each wave ends in something usable and
+testable on its own; no wave's exit criteria depend on a later wave. The two standalone-value bets
+are deliberate: Wave 0's frozen record format is publishable without any kernel (spine §6.5 —
+durable execution has no MCP-equivalent), and Wave 2's manifest catalog + probe suite is usable by
+people who never run Kyxo (open-model-infrastructure.md, Implication 10: nobody negotiates today;
+accurate manifests for the top targets are immediate value) — bounded, per amendment A14, to the
+four MVP adapters, because a catalog is a maintenance commitment and an unmaintained one is worse
+than none.
 
 ```mermaid
 graph LR
-    W0["Wave 0<br/>Protocol & schema freeze v0"] --> W1["Wave 1<br/>Kernel core"]
-    W1 --> W2["Wave 2<br/>Capability tier"]
-    W2 --> W3["Wave 3<br/>Strategy tier"]
+    subgraph W0G["Wave 0 — freeze, three surfaces + governance"]
+        W0A["Wire schemas v0<br/>envelope · manifest grammar ·<br/>lifecycle · checkpoint"]
+        W0B["Frozen facade (A4)<br/>KernelApi / InvokeCtx / HarnessCtx<br/>+ conformance fixtures"]
+        W0C["Governance (A5)<br/>Apache-2.0 + spec licence · DCO ·<br/>marks · spec process · neutral-home trigger"]
+        W0D["Semantic property-test spec (A1)<br/>journal · checkpoint · fork · dedup<br/>EXIT GATE — BUILT, passing"]
+    end
+    W0G --> W1["Wave 1<br/>Kernel core"]
+    W1 --> W2["Wave 2<br/>Capability tier<br/>+ enforcement floor (A6)"]
+    W2 --> W3["Wave 3<br/>Strategy tier<br/>+ telemetry ranking (A13)"]
     W3 --> W4["Wave 4<br/>Hardening"]
     W4 --> W5["Wave 5<br/>Ecosystem"]
-    W0 -.->|"fixtures reused by every wave"| W5
-    W2 -.->|"manifest catalog ships standalone"| PUB1(["public artifact"])
-    W0 -.->|"record format ships standalone"| PUB2(["public artifact"])
+    W0G -.->|"fixtures reused by every wave"| W5
+    W2 -.->|"manifest catalog (4 adapters, A14)<br/>ships standalone"| PUB1(["public artifact"])
+    W0G -.->|"record format + facade<br/>ship standalone"| PUB2(["public artifact"])
+    W0D -.->|"discharged early:<br/>prototypes/kernel-semantics"| DONE(["docs 17 · 18 · 20"])
 ```
 
-### Wave 0 — Protocol and schema freeze v0
+### Wave 0 — Protocol, facade and governance freeze v0
 
-- **Goal.** Freeze the wire-visible contracts before any kernel code exists to ossify around
-  accidents: the event envelope, the manifest grammar, the invocation lifecycle machine, and
-  the checkpoint schema, as versioned JSON-Schema (2020-12) artifacts with conformance
-  fixtures. This is the anti-Codex move: their SQ/EQ protocol drifted per release because it
-  was never a spec (spine §8); ours is a spec before it is an implementation.
+- **Goal.** Freeze the contracts before any kernel code exists to ossify around accidents. Four
+  workstreams, and amendments A4/A5/A1 make the last three co-equal with the first rather than
+  follow-ons:
+  1. **The wire-visible contracts** — event envelope, manifest grammar, invocation lifecycle
+     machine, checkpoint schema — as versioned JSON-Schema (2020-12) artifacts with conformance
+     fixtures. This is the anti-Codex move: their SQ/EQ protocol drifted per release because it
+     was never a spec (spine §8); ours is a spec before it is an implementation.
+  2. **The facade** (amendment A4). The wire schemas alone never covered what a provider or a
+     strategy actually programs against, so `KernelApi` / `InvokeCtx` / `HarnessCtx` are frozen
+     here too: versioned, conformance-tested, with the same stability classes and deprecation
+     clock. The normative verb list — decided by what the four phase-1 prototypes demonstrably
+     needed — is bind, invoke, resume (with re-grant option), cancel, attenuate, getGrant
+     (handle-shaped, A8), charge, storeArtifact/readArtifact, scoped journal read, checkpoint,
+     createCell, discovery (listCapabilities), the Kind verbs
+     (registerKind/createKindObject/getKindObject/watch), and an injected clock. `InvokeCtx` is
+     **data only** — no kernel handle reaches a capability, which is what makes the commit barrier
+     structural rather than cooperative. ADR-010's replaceability claim stays scoped to the
+     execution record until these fixtures exist; with them, "the TypeScript kernel is replaceable"
+     becomes a testable statement instead of an intention.
+  3. **Governance** (amendment A5), with the same priority as the schema freeze — see the dedicated
+     bullet below.
+  4. **The executable semantic spec** (amendment A1) as this wave's hardest exit gate — see below.
 - **Architecture introduced.** Date-versioned kernel protocol with stability classes
   (experimental/testing/stable/deprecated, 12-month deprecation floor — MCP's lifecycle
   lifted verbatim, mcp-protocol.md §12). Two-tier event envelope (payloads by Artifact
