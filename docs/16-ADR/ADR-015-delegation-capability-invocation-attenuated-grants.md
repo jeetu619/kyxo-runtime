@@ -1,5 +1,11 @@
 # ADR-015: Delegation is capability invocation under attenuated grants with lineage
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A2 (wording), A8. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: **Proposed**
 
 Deciders: Kyxo architecture program. Related: 04-ORCHESTRATION-MODELS, 10-HARNESS-AND-GRAPH-RUNTIME, ADR-013 (grant substrate), ADR-014 (depth/width/budget units), ADR-012 (result verification), ADR-016 (delegation across the federation edge).

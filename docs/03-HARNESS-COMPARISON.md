@@ -1,5 +1,11 @@
 # 03 — Harness Comparison: Nineteen Systems, Thirty-One Dimensions
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A9(i). Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: DRAFT for adversarial review. Written from `research/DESIGN-SPINE.md` (binding) and the
 research notes cited per row; claim labels and confidence follow `research/METHODOLOGY.md`.
 Sections that state design positions are OUR PROPOSAL by default; evidence claims carry

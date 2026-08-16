@@ -1,5 +1,11 @@
 # ADR-003: Capability Contract — Axis-Typed Tiered Manifests with Three Information Sources
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. No further amendments are outstanding for this document.
+
+
 - **Status:** Proposed (pre-adversarial-review)
 - **Date:** 2026-08-16
 - **Spine anchor:** `research/DESIGN-SPINE.md` §1 (H2, H4, C3), §4 (capability contract)

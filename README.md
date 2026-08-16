@@ -21,7 +21,9 @@ no production implementation. See `docs/15-IMPLEMENTATION-ROADMAP.md` for the bu
 research/
   METHODOLOGY.md          Research discipline: source ledger, claim labeling, confidence levels
   notes/                  Primary research notes, one per ecosystem domain, with citations
-  DESIGN-SPINE.md         Internal coordination document: the load-bearing design decisions
+  DESIGN-SPINE.md         The load-bearing design decisions + the binding Amendment log (A1–A14)
+  ADVERSARIAL-REVIEW.md   Ten-reviewer adversarial review: 121 findings, votes, verdicts
+  OPEN-ISSUES.md          Writer self-reports and prototype findings (review input)
 docs/
   01-EXECUTIVE-THESIS.md          Problem, thesis, objections, recommendation
   02-ECOSYSTEM-RESEARCH.md        Synthesized ecosystem research with labeled evidence
@@ -43,13 +45,32 @@ prototypes/
   kernel/                 Type-level and small runnable prototypes validating the kernel
 ```
 
+## Status
+
+The architecture phase is complete. Recommendation: **BUILD WITH CHANGES** — see
+`docs/01-EXECUTIVE-THESIS.md`. Ten adversarial reviewers (eight personas, two auditors) voted
+BUILD WITH CHANGES unanimously and answered the "useful primitive layer or merely another
+abstraction layer?" gate question QUALIFIED-YES unanimously, producing 121 findings
+(7 FATAL, 49 SERIOUS). All FATAL findings are adjudicated as binding amendments **A1–A14** in
+the Amendment log of `research/DESIGN-SPINE.md`.
+
+**Reading the amendments correctly:** the amendment log is authoritative. Documents 02–15 and
+the ADRs were written before the review; each carries a status banner naming which amendments
+are applied in its body and which are adopted-but-not-yet-reflected. Where a document and the
+amendment log disagree, the amendment log governs. Reconciling the remaining body text is the
+outstanding editorial work (it changes no decision — every decision is recorded in the
+amendment log and summarized in the thesis).
+
 ## Reading order
 
-1. `docs/01-EXECUTIVE-THESIS.md` — the conclusion and why
-2. `docs/05-KERNEL-PRIMITIVES.md` + `docs/06-CAPABILITY-SPEC.md` — the core design
-3. `docs/07-RUNTIME-ARCHITECTURE.md` — how it fits together
-4. `docs/16-ADR/` — the consequential decisions, each with alternatives considered
-5. Everything else as reference depth
+1. `docs/01-EXECUTIVE-THESIS.md` — the recommendation, the strongest objections, and the
+   answers to the thirty questions the program set out to answer
+2. `research/DESIGN-SPINE.md` — the decisions, ending in the binding Amendment log
+3. `docs/05-KERNEL-PRIMITIVES.md` + `docs/06-CAPABILITY-SPEC.md` — the core design
+4. `docs/07-RUNTIME-ARCHITECTURE.md` — how it fits together
+5. `research/ADVERSARIAL-REVIEW.md` — how hard it was attacked and what survived
+6. `docs/16-ADR/` — the consequential decisions, each with alternatives considered
+7. Everything else as reference depth
 
 ## Prototypes
 

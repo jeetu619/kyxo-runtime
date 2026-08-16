@@ -1,5 +1,11 @@
 # 10 — Harness and Graph Runtime
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1, A4, A10, A13. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: DRAFT for adversarial review. Written from `research/DESIGN-SPINE.md` (binding) under
 the claim-labeling discipline of `research/METHODOLOGY.md`. Everything not carrying an explicit
 evidence label is OUR PROPOSAL. Covers mission Phases 11 (planner architecture), 13 (loop
@@ -73,7 +79,7 @@ callbacks. The split of responsibilities:
 |---|---|---|
 | Event intake | Delivers user input, tool observations, external events, suspension resolutions into the cell as journal-ordered events | Codex SQ/EQ; ADK event loop (both notes) |
 | Checkpoint-at-yield | Every callback return is a yield-is-commit point: effects in the returned decision are journaled atomically before the behaviour resumes | ADK's one contract that survived the 1.x→2.x rewrite intact (research/notes/google-adk.md, SOURCE-CODE OBSERVATION/HIGH) |
-| Budget charging | Grant decrement at commit, tree-wide; refusal-to-spawn and child-stop on exhaustion | Claude Code `maxBudgetUsd` tree enforcement pattern, retrofitted there, native here (research/notes/anthropic-claude-code-agent-sdk.md) |
+| Budget charging | Grant reserve-at-lease / settle-at-outcome (amendment A2), tree-wide; refusal-to-spawn and child-stop on exhaustion | Claude Code `maxBudgetUsd` tree enforcement pattern, retrofitted there, native here (research/notes/anthropic-claude-code-agent-sdk.md) |
 | Cancellation | Propagated between callbacks at commit points; a behaviour never needs cancellation logic | Codex `Op::Interrupt`; LangGraph `request_drain()` |
 | Typed suspension | `approval-required` / `input-required` / `auth-required` invocation states with typed payloads, persisted in checkpoints | MAF request-info ports stored inside checkpoints; OpenAI `NextStepInterruption` + RunState (both notes) |
 | Loop accounting | Iteration counters, progress hashes, failure streaks — computed by the driver, handed to policy (§3) | Gemini CLI LoopDetectionService; Roo mistake counters (research/notes/coding-agents-landscape.md) |
@@ -236,7 +242,7 @@ supplied *to* the harness by Grants, budgets, checkpoints, and cells — none is
 it. The harness is a behaviour/strategy: spine §3's explicit non-primitive list stands.
 
 What IS kernel-adjacent is the driver (§1.2): the generic loop mechanics live in the stdlib
-against kernel objects, because checkpoint-at-yield and budget-charge-at-commit must be
+against kernel objects, because checkpoint-at-yield and budget settlement must be
 uniform across all harnesses or the accounting and recovery guarantees fracture. The line:
 mechanics below the callback interface, judgment above it.
 

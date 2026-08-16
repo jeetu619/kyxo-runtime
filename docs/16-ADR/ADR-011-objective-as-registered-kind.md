@@ -1,5 +1,11 @@
 # ADR-011: Objective is a registered Kind over a root invocation, not a kernel primitive
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. No further amendments are outstanding for this document.
+
+
 Status: **Proposed**
 
 Deciders: Kyxo architecture program. Related: 05-KERNEL-PRIMITIVES, 09-CONTEXT-AND-MEMORY, ADR-012 (success criteria bind to the commit gate), ADR-014 (budget requests), ADR-015 (hierarchical objectives = invocation tree).

@@ -1,5 +1,11 @@
 # 07 — Runtime Architecture
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A3, A4, A6. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: DRAFT for adversarial review. Derived from `research/DESIGN-SPINE.md` (binding contract);
 claim labels per `research/METHODOLOGY.md`. Everything in this document is OUR PROPOSAL unless
 explicitly labeled otherwise; evidence claims carry explicit labels with note citations.
@@ -100,7 +106,7 @@ inside the named subsystem is architecturally wrong, not merely untidy.
 | **Journal** | Typed, versioned, append-only event records; correlation/causation/actor IDs; two-tier storage (payloads by Artifact reference); commit order per cell | Live delivery guarantees (advisory plane), payload bytes (CAS), event *semantics* (userland Kinds/strategies) |
 | **Scheduler** (task runtime) | Cell turns (single-writer), leases + visibility timeouts, deadlines, cancellation propagation, activation-on-demand | Planning, routing, model selection, retry *policy* content (declared per binding/strategy) |
 | **Policy pipeline** | Ordered declarative stages at bind + every effectful invocation; deny-class non-bypassable; verdicts journaled | Judgment (verifiers are capabilities), consent UX (surfaces), authority itself (Grants) |
-| **Grants** | Unforgeable, attenuable, revocable authority + quantitative budget; lineage tree; decrement at commit; child ≤ parent | Feature declarations (manifests), authentication of external principals (protocol edges: OAuth etc.) |
+| **Grants** | Unforgeable, attenuable, revocable authority + quantitative budget; lineage tree; reserve at lease, settle at outcome (amendment A2); child ≤ parent | Feature declarations (manifests), authentication of external principals (protocol edges: OAuth etc.) |
 | **Cells** | Keyed single-writer stateful scopes; lifecycle; state fold from journal | What the state *means*; conversation semantics; memory policy |
 | **Invocations** | Closed transition algebra; idempotency keys; exactly-once illusion; typed suspension payloads | Deciding *what* to invoke (strategies) or *how* work is done (providers) |
 | **Checkpoints** | Consistent cuts: journal position + snapshot + pending invocations, bound to definition identity; portability | Workspace/file snapshots (execution-environment capability), git |
@@ -251,7 +257,7 @@ progress) are projections and do not appear here.
 | e11 | `context.compiled` view `art-cx1` | cell:run/r-1 | e9 | deterministic compile; provenance labels survive into view; compile hash recorded |
 | e12 | `invocation.submitted` `inv-m1` on `b-m` | cell:run/r-1 | e11 | model turn 1 |
 | e13 | `invocation.completed` `inv-m1` | kern | e12 | `art-m1` (assistant msg, tool call `run_shell: pytest -x`); carry-through `art-rs1` |
-| e14 | `grant.charged` `g-m` −12,4k tok | kern | e13 | decrement at commit; lineage rollup to `g-root` |
+| e14 | `grant.settled` `g-m` −12,4k tok (reserved at e11) | kern | e13 | settlement at outcome (A2); lineage rollup to `g-root` |
 | e15 | `policy.evaluated` shell exec → allow (sandboxed) | kern | e13 | stage trace journaled |
 | e16 | `invocation.submitted` `inv-t1` on `b-shell` | cell:run/r-1 | e15 | lease `ls-1` (visibility timeout 120 s), key `ik-t1` |
 | e17 | `invocation.completed` `inv-t1` | kern | e16 | `art-t1` test output; taint label `workspace` |

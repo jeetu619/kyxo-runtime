@@ -1,5 +1,11 @@
 # 05 — Kernel Primitives: Deriving the Minimal Vocabulary
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A4, A8, A10, A11. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: derived from `research/DESIGN-SPINE.md` §2–§3 (pre-adversarial-review). Claim labels follow
 `research/METHODOLOGY.md`. Everything in this document not carrying an explicit evidence label is
 OUR PROPOSAL. Sibling references: doc 02 (Ecosystem Research), doc 03 (Harness Comparison), doc 04

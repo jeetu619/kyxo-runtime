@@ -1,8 +1,14 @@
 # ADR-014: Budgets are attenuated quantitative grants, kernel-decremented
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2. No further amendments are outstanding for this document.
+
+
 Status: **Proposed**
 
-Deciders: Kyxo architecture program. Related: 11-SECURITY-AND-POLICY, ADR-013 (Grant substrate), ADR-015 (attenuation across delegation), ADR-009 (charge-at-commit), ADR-011 (budget requests on Objectives).
+Deciders: Kyxo architecture program. Related: 11-SECURITY-AND-POLICY, ADR-013 (Grant substrate), ADR-015 (attenuation across delegation), ADR-009 (journal injection), ADR-011 (budget requests on Objectives).
 
 ## Context
 
@@ -34,7 +40,7 @@ graph TD
     W --> V["Verifier invocation (ADR-012)<br/>50K · $2 · 10m · read-only"]
 ```
 
-3. **The kernel decrements at commit.** The journaled outcome Event (ADR-009) is the charging event: when an invocation's outcome commits, the kernel debits the grant chain atomically with the append. Reported usage from capabilities (model adapters' usage blocks, with their divergent field names — research/notes/open-model-infrastructure.md, vocabulary) is normalized by the adapter into the typed units; the kernel trusts the adapter's declaration and journals it, making mischarging auditable.
+3. **The kernel reserves at lease and settles at outcome** (revised by binding amendment A2, adversarial review 2026-08-16; the original decision read "decrements at commit"). Admission reserves the invocation's declared or estimated cost against every grant in the chain (journaled `grant.reserved`); the journaled outcome Event (ADR-009) settles the actual cost atomically with the append (`grant.settled`) and releases the unused remainder (`grant.released`). Reservation is what makes exhaustion detectable *before* spend rather than after it, and makes parallel siblings safe against mutual overdraft; federation (doc 07) is the same mechanism with lagged settlement. Reported usage from capabilities (model adapters' usage blocks, with their divergent field names — research/notes/open-model-infrastructure.md, vocabulary) is normalized by the adapter into the typed units; the kernel trusts the adapter's declaration and journals it, making mischarging auditable.
 
 4. **Exhaustion is a typed interrupted state, not an exception.** `budget-exceeded` is a member of the invocation lifecycle's interrupted class (spine §3.3), generalizing A2A's `AUTH_REQUIRED` escalation chaining: the requirement (a typed top-up request) propagates up the grant lineage to whoever can approve — parent cell, human, or policy — and work resumes on fulfillment or terminates typed. Runaway loops become escalations with attribution, not silent cost.
 
@@ -74,4 +80,4 @@ graph TD
 | seL4 untyped / Zircon job policies closest prior art; genuinely novel object | FACT + INFERENCE | HIGH (on novelty) | research/notes/prior-art-negotiation-extension.md §7, open question 6 |
 | Usage field names divergent across providers (normalization burden) | FACT | — | research/notes/open-model-infrastructure.md vocabulary |
 
-Decision confidence: **HIGH** that budgets must be hierarchical, grant-borne, and kernel-enforced (three independent failure shapes + explicit absences); **MEDIUM** on the unit list and charge-at-commit semantics (novel design, no prior art to validate against; reservation semantics for parallelism deliberately deferred to the prototype).
+Decision confidence: **HIGH** that budgets must be hierarchical, grant-borne, and kernel-enforced (three independent failure shapes + explicit absences); **MEDIUM** on the unit list and on reserve/settle semantics (novel design, no prior art to validate against; amendment A2 adopted reservation to close scenario P's undercharging hole, but the reservation-window and estimate-accuracy knobs remain prototype-validated only).

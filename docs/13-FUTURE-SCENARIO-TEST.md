@@ -1,5 +1,11 @@
 # 13 — Future-Scenario Test
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: **DRAFT for adversarial review** (mission Phase 32). Written from `research/DESIGN-SPINE.md`
 (binding contract) under `research/METHODOLOGY.md` discipline. Everything not explicitly labeled
 otherwise is OUR PROPOSAL. Evidence claims carry explicit labels with note citations.
@@ -38,7 +44,7 @@ maximally hostile to *this specific* kernel's load-bearing assumptions.
 **Anti-vacuity rule.** The Kind registry exists precisely so new concepts arrive as data
 (spine §3.9), so "define a Kind" can absorb almost any *noun*. That would make this test
 unfalsifiable. The test therefore bites only on the parts with **fixed semantics**: the closed
-invocation transition algebra, grant accounting (decrement-at-commit, attenuation, lineage),
+invocation transition algebra, grant accounting (reserve-at-lease / settle-at-outcome per amendment A2, attenuation, lineage),
 the append-only truth plane, bind-time sealing of Bindings, checkpoint identity binding, and
 single-writer cells. A scenario passes only if those survive; naming a Kind is never by itself
 an answer. Per the mandate, we deliberately engineered several scenarios to land
@@ -467,7 +473,7 @@ of old Kinds under the 12-month stability-class clock (spine §4).
 ## 2. The engineered hostile scenarios P–R
 
 These three were designed against this kernel's specific load-bearing assumptions:
-charge-at-commit grant accounting (P), Binding as the sole authority attachment point (Q),
+grant accounting (P — resolved by amendment A2), Binding as the sole authority attachment point (Q),
 and bind-time sealing of manifests (R).
 
 ### P. Speculative branching execution
@@ -524,6 +530,13 @@ branch-pruning policies.
 **Verdict: NO — kernel change required**: Grant accounting moves from decrement-at-commit to
 reserve-at-lease/settle-at-outcome. **Confidence: MEDIUM** (that the change suffices — HIGH
 that the current semantics fail the scenario).
+
+> **Resolved (adversarial review, 2026-08-16).** This verdict was upheld and the kernel change
+> adopted as binding amendment **A2**: reservation at lease, settlement at outcome, release of
+> the unused remainder, with distinct `grant.reserved` / `grant.settled` / `grant.released`
+> event kinds. The scenario therefore now reads **YES — kernel survives as amended**; it is
+> retained here as the analysis that forced the change, and it is the clearest demonstration
+> that the scenario suite is load-bearing rather than decorative.
 
 ### Q. Capabilities negotiating with each other without kernel mediation
 
@@ -732,7 +745,7 @@ To keep the brittle spots flexible, V1 must **not**:
 
 ### 4.4 Proposed spine amendments (for the adversarial-review phase)
 
-1. **Grant accounting**: decrement-at-commit → reserve-at-lease / settle-at-outcome (from P).
+1. **Grant accounting**: decrement-at-commit → reserve-at-lease / settle-at-outcome (from P). **ADOPTED** as binding amendment A2 in the spine amendment log (2026-08-16); scenario P's NO verdict is thereby resolved.
 2. **Repair verbs**: fork-from-checkpoint primary *for decision state*; compensation primary
    for irreversible external effects (from E).
 3. **Guarantee scoping**: ocap claims scoped to kernel-issued authority; brought-authority

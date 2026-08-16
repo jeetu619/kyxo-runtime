@@ -1,5 +1,11 @@
 # 09 — Context and Memory
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** vocabulary: memory cell vs kernel Cell. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: DECIDED (pre-adversarial-review). Derived from `research/DESIGN-SPINE.md` §5; claim
 labels per `research/METHODOLOGY.md`. Everything not carrying an explicit evidence label is
 OUR PROPOSAL. Sibling references: doc 04 (Orchestration Models) for strategies that consume

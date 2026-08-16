@@ -1,5 +1,11 @@
 # ADR-002: Journal-First Event Sourcing with Checkpoint Composite
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1, A11, designation as normative for recovery semantics. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 - **Status:** Proposed (pre-adversarial-review)
 - **Date:** 2026-08-16
 - **Spine anchor:** `research/DESIGN-SPINE.md` §1 (H5), §3 (objects 4 *Event*, 8 *Checkpoint*), §7, §8 (storage V1)
@@ -54,7 +60,7 @@ flowchart LR
 
 **B. Pure replay determinism (Temporal-style).** The journal records effect results; recovery re-executes orchestration code from the top, injecting recorded results positionally; determinism of orchestration code is mandatory forever. Rejected for Kyxo's workload: harness logic, prompts, and model choices change weekly, and positional replay requires either version-patching gymnastics or old code surviving indefinitely — the anti-pattern the spine explicitly rejects (research/DESIGN-SPINE.md §7). The determinism constraints also leak into user code (PydanticAI×Temporal: no I/O in the loop, payload caps, buffered streaming — FACT, research/notes/agent-frameworks-crewai-pydantic-llamaindex-mastra-letta.md). What replay gets right — journaled effects with stable identity — the composite keeps, via record-and-inject against deterministic effect IDs, without demanding whole-program replayability.
 
-**C. Pure snapshot (LangGraph-style).** Checkpoint = state snapshot + version vectors per barrier; no authoritative event journal. Rejected: resume is cheap but the model demonstrably needs patches LangGraph itself is shipping — `pending_writes` for sub-step effects, DeltaChannel because snapshot size grows with state, node re-execution discipline for `interrupt()` (SOURCE-CODE OBSERVATION/HIGH + FACT, research/notes/langgraph.md). Without a journal there is no audit trail, no causation/provenance chain, no commit-point verification hook (doc 08's gate needs an event to gate), and budget decrement-at-commit has no commit record. Snapshots are the right *resume accelerator*; they are the wrong *truth*.
+**C. Pure snapshot (LangGraph-style).** Checkpoint = state snapshot + version vectors per barrier; no authoritative event journal. Rejected: resume is cheap but the model demonstrably needs patches LangGraph itself is shipping — `pending_writes` for sub-step effects, DeltaChannel because snapshot size grows with state, node re-execution discipline for `interrupt()` (SOURCE-CODE OBSERVATION/HIGH + FACT, research/notes/langgraph.md). Without a journal there is no audit trail, no causation/provenance chain, no commit-point verification hook (doc 08's gate needs an event to gate), and budget settlement (amendment A2) has no commit record. Snapshots are the right *resume accelerator*; they are the wrong *truth*.
 
 **Why the composite specifically:** each pure design fails on exactly the dimension the other covers. The journal gives audit, provenance, verification gating, and budget commit; checkpoints give O(state) resume, portability, and fork identity. ADK proves journal-without-checkpoints hits O(history) resume and replay barriers (their own TODO); LangGraph proves checkpoints-without-journal hits pending-writes patches and lost causality. MAF's definition-scoped checkpoint (topology hash + lineage) supplies the portability contract; MCP's deletion of stream resumability confirms durability-as-handles at protocol edges (research/notes/microsoft-autogen-sk-agent-framework.md, research/notes/mcp-protocol.md).
 

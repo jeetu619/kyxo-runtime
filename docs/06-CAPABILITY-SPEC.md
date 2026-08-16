@@ -1,5 +1,11 @@
 # 06 — Capability Specification
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A2, A3, A4, A8, A9(ii), A10, A11, A13, A14. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 **Status: V0 DRAFT (pre-adversarial-review).** This document is the normative specification of
 the Kyxo capability contract: identity, manifest grammar, discovery, probes, negotiation,
 binding, invocation lifecycle, escape hatches, and the projection of external systems onto the

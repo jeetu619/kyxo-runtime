@@ -1,5 +1,11 @@
 # 04 — Orchestration Models: Eleven Paradigms, One Kernel
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A9(i). Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: derived from `research/DESIGN-SPINE.md` (pre-adversarial-review). This document is the
 Phase-3 deep analysis of execution paradigms. It profiles eleven orchestration paradigms
 against a fixed dimension set, then argues the adjudication of the mission's central

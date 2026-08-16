@@ -1,5 +1,11 @@
 # 15 — Implementation Roadmap
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1, A3, A4, A5, A6, A7, A13, A14. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: DECIDED (pre-adversarial-review). Covers mission Phases 30 (waves), 31 (deployment
 architecture), 35 (build-vs-reuse), 38 (self-hosting note). Written from
 `research/DESIGN-SPINE.md`; vocabulary per spine §2 and `docs/05-KERNEL-PRIMITIVES.md`.
@@ -161,7 +167,7 @@ graph LR
   durable-execution.md §7, without positional command matching). Single-writer cell
   scheduler with activation-on-demand (the Orleans/Virtual-Object/Entity-Workflow
   convergence, INFERENCE/HIGH, durable-execution.md §6). Grant lineage tree with
-  decrement-at-commit and mandatory attenuation on delegation. Ordered policy pipeline
+  reserve-at-lease/settle-at-outcome accounting (amendment A2) and mandatory attenuation on delegation. Ordered policy pipeline
   evaluated at bind and at every effectful invocation, deny-class stages non-bypassable.
   Checkpoint = journal position + state snapshot + pending invocations, bound to definition
   identity. Leases with visibility timeouts on every external effect; dedup windows with

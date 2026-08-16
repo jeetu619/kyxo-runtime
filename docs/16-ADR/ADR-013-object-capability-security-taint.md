@@ -1,5 +1,11 @@
 # ADR-013: Object-capability security with taint propagation
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A3, A6, A8. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: **Proposed**
 
 Deciders: Kyxo architecture program. Related: 11-SECURITY-AND-POLICY, ADR-014 (budgets ride on Grants), ADR-015 (attenuation-on-delegation), ADR-009 (checkpoint interaction — see the open question).

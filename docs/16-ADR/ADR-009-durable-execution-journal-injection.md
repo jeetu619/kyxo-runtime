@@ -1,8 +1,14 @@
 # ADR-009: Durability by journal injection, not replay determinism
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** A2. **Adopted but not yet reflected in this document's body:** A1, demotion of overlapping recovery text to a cross-reference. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: **Proposed**
 
-Deciders: Kyxo architecture program. Related: 08-EVENT-AND-STATE-MODEL, 07-RUNTIME-ARCHITECTURE, ADR-016 (portable checkpoints), ADR-014 (charge-at-commit).
+Deciders: Kyxo architecture program. Related: 08-EVENT-AND-STATE-MODEL, 07-RUNTIME-ARCHITECTURE, ADR-016 (portable checkpoints), ADR-014 (budget grants: reserve/settle).
 
 ## Context
 
@@ -62,13 +68,13 @@ sequenceDiagram
 
 **B. No kernel durability — retry-from-scratch with idempotent top-level jobs.** Rejected. Agent runs wait on humans for days (Restate awakeables, DBOS `recv` with day-scale timeouts exist because of this), burn real money per model call, and need step-granular reproduction for debugging. Retry-from-scratch re-buys every token on every failure, cannot express typed suspension (`input-required`, `approval-required`, `budget-exceeded` — spine §3.3), and produces no audit record. Every production system studied converged on *some* durable record; the absence option has no surviving exemplar.
 
-**C. Checkpoint-snapshots only, no journal (pure state transfer).** Seriously considered — Cursor ships state-transfer continuity commercially with no replay and no event sourcing (research/notes/cursor.md §8). Rejected as the *sole* mechanism: without a journal there is no step-granular fork, no audit trail, no charge-at-commit substrate, and no portable execution-record format (the gap map's item 5). Adopted instead as a complement: Checkpoints are first-class kernel objects and the migration primitive (ADR-016).
+**C. Checkpoint-snapshots only, no journal (pure state transfer).** Seriously considered — Cursor ships state-transfer continuity commercially with no replay and no event sourcing (research/notes/cursor.md §8). Rejected as the *sole* mechanism: without a journal there is no step-granular fork, no audit trail, no settlement substrate, and no portable execution-record format (the gap map's item 5). Adopted instead as a complement: Checkpoints are first-class kernel objects and the migration primitive (ADR-016).
 
 ## Consequences
 
 **Positive.**
 - Prompts, model choices, and tool wiring change without nondeterminism errors or patch ceremony; the volatile part of AI systems is treated as volatile.
-- The journal is simultaneously the recovery record, the audit log, the billing substrate (charge-at-commit, ADR-014), and the observability source (projections, spine §2).
+- The journal is simultaneously the recovery record, the audit log, the billing substrate (reserve/settle, ADR-014), and the observability source (projections, spine §2).
 - Fork-from-checkpoint gives the reproduction/repair workflow that both DBOS and Restate independently evolved toward, as one verb.
 - A specified journal + checkpoint schema is publishable: "durable execution has no MCP-equivalent" (research/notes/durable-execution.md, Implication 10) — the record format becomes differentiation.
 

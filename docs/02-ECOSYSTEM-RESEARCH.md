@@ -1,5 +1,11 @@
 # 02 — Ecosystem Research: Integrative Synthesis
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A9(i). Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+
+
 Status: derived from `research/DESIGN-SPINE.md` (pre-adversarial-review). This document is the
 cross-cutting synthesis of the thirteen research notes in `research/notes/`; the notes remain
 the deep record and every claim here points back into them. Labels and confidence follow

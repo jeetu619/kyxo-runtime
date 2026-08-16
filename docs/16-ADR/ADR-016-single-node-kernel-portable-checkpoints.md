@@ -1,5 +1,11 @@
 # ADR-016: Single-node kernel; distribution via portable checkpoints and protocol edges
 
+> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
+> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
+> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Applied here:** none. No further amendments are outstanding for this document.
+
+
 Status: **Proposed**
 
 Deciders: Kyxo architecture program. Related: 07-RUNTIME-ARCHITECTURE, 13-FUTURE-SCENARIO-TEST, ADR-009 (checkpoint format), ADR-010 (V1 scope), ADR-015 (delegation across edges).
