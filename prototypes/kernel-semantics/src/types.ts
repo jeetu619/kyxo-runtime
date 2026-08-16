@@ -79,12 +79,36 @@ export interface CapabilityTraits {
   readonly externallyStateful: boolean;
 }
 
+/**
+ * How a budget unit behaves for one capability. Declared, negotiated data — the kernel
+ * branches on this the way it branches on effect class, never on capability identity.
+ *
+ * `metered` is the trust statement, and it decides what settlement charges:
+ *
+ *   metered: true   the provider reports authoritative consumption (an LLM returning its
+ *                   token counts). A declaration BELOW the reservation is accepted, so
+ *                   accounting tracks reality and an over-estimate is refunded.
+ *   metered: false  nobody measures this unit. The declaration is a capability's own
+ *                   word about its own spending, so accepting a reduction would make a
+ *                   budget depend on the honesty of untrusted code. Settlement charges
+ *                   the full reservation.
+ *
+ * `perInvocation` is the floor the kernel reserves even when the caller estimates
+ * nothing, which is what stops budget enforcement from being opt-in (docs/20 F-15).
+ */
+export interface UnitPolicy {
+  readonly perInvocation: number;
+  readonly metered: boolean;
+}
+
 export interface CapabilityManifest {
   readonly id: string;
   readonly version: string;
   readonly traits: CapabilityTraits;
   /** Tiered axes; ladders are manifest DATA so the kernel never knows axis semantics (A10). */
   readonly axes: Readonly<Record<string, { readonly value: string; readonly ladder: readonly string[] }>>;
+  /** Budget units this capability consumes. Absent unit ⇒ nothing is reserved for it. */
+  readonly units?: Readonly<Record<string, UnitPolicy>> | undefined;
 }
 
 // ---------------------------------------------------------------------------

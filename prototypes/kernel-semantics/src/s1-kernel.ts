@@ -22,7 +22,7 @@ import {
 import { chainBlocked, foldEvent, hasLanded, protectionFor, remaining } from './s1-fold.ts';
 import type {
   CapabilityProvider, EffectClass, EffectKey, EffectProposal, ExecutionId,
-  GrantId, InvocationId, InvocationState, PolicyStage, UncertaintyDisposition,
+  GrantId, InvocationId, InvocationState, PolicyStage, UncertaintyDisposition, UnitPolicy,
 } from './types.ts';
 import { GrantHandle } from './types.ts';
 import { CrashError, Storage, canonical, sha } from './storage.ts';
@@ -62,6 +62,21 @@ export function verifyS1Record(record: unknown): boolean {
   return rec.checksum === sha({
     commitToken: rec.commitToken, executionId: rec.executionId, familyId: rec.familyId, events: rec.events,
   });
+}
+
+/** Per-unit reservation: max(capability floor, caller estimate), plus one invocation. */
+function reserveUnits(
+  policy: Readonly<Record<string, UnitPolicy>> | undefined,
+  estimate: Units | undefined,
+): Units {
+  const out: Record<string, number> = { invocations: 1 };
+  for (const [unit, p] of Object.entries(policy ?? {})) {
+    out[unit] = Math.max(out[unit] ?? 0, p.perInvocation);
+  }
+  for (const [unit, amount] of Object.entries(estimate ?? {})) {
+    out[unit] = Math.max(out[unit] ?? 0, amount);
+  }
+  return out;
 }
 
 type AdmissionDecision =
@@ -358,7 +373,11 @@ export class S1Kernel {
           throw new AuthorizationError(`policy denied: ${d.reason}`);
         }
       }
-      const res: Units = { invocations: 1, ...(opts.estimate ?? {}) };
+      // The reservation is the union of what the capability declares it consumes and what
+      // the caller estimates, taking the larger of the two per unit. Neither side can
+      // shrink it: a caller omitting `estimate` would otherwise make every non-invocation
+      // budget opt-in, which is B9b in a new costume (docs/20 F-15).
+      const res: Units = reserveUnits(provider.manifest.units, opts.estimate);
       for (const [unit, amount] of Object.entries(res)) {
         const avail = remaining(fam, grant.id, unit);
         if (amount > avail) {
@@ -520,16 +539,43 @@ export class S1Kernel {
     else if (gated && !(evidenceSeen && evidencePass)) { outcome = 'failed'; error = 'verification-failed'; }
     else { outcome = 'completed'; }
 
-    // B9b: declared usage is capped by what was reserved. A capability cannot settle
-    // more than the kernel held for it.
+    // B9b: settlement per unit.
+    //
+    //   ceiling  a declaration can never exceed the reservation. The kernel held N; N is
+    //            the most that can be spent, whatever the capability says.
+    //   floor    a declaration can only reduce the charge for a METERED unit, where the
+    //            provider reports authoritative consumption. For an unmetered unit the
+    //            declaration is untrusted code's word about its own spending, so the full
+    //            reservation is charged — otherwise a capability declaring zero would run
+    //            forever against a finite budget (docs/20 F-15).
+    //
+    // Every unit that was reserved settles, including ones the capability never mentioned.
+    // An invocation that did not complete settles only what was actually evidenced. There
+    // is no reason to believe an unmetered unit was consumed by work that failed, and
+    // burning the reservation on every transient failure would make retries eat the
+    // budget. Failures stay bounded because `invocations` is always reserved and always
+    // charged (tests G6, G14).
+    const units = this.caps.get(inv?.capabilityId ?? '')?.manifest.units;
     const cappedUsage: Record<string, number> = {};
-    for (const [unit, amount] of Object.entries(usage)) {
-      const held = reservation[unit] ?? 0;
-      if (amount > held) {
+    for (const [unit, held] of Object.entries(reservation)) {
+      const declared = usage[unit];
+      const metered = unit === 'invocations' ? true : units?.[unit]?.metered === true;
+      if (declared !== undefined && declared > held) {
         drafts.push({ kind: 'policy.denied', invocationId, grantId,
-          payload: { reason: 'usage-exceeds-reservation', unit, declared: amount, reserved: held } });
+          payload: { reason: 'usage-exceeds-reservation', unit, declared, reserved: held } });
       }
-      cappedUsage[unit] = Math.min(amount, held);
+      if (outcome !== 'completed') {
+        cappedUsage[unit] = Math.min(declared ?? 0, held);
+      } else {
+        cappedUsage[unit] = declared !== undefined && metered ? Math.min(declared, held) : held;
+      }
+    }
+    for (const [unit, declared] of Object.entries(usage)) {
+      if (reservation[unit] !== undefined) continue;
+      // Declared against a unit nobody reserved: unauthorized, so it settles at nothing
+      // and is recorded. The capability's manifest should have declared the unit.
+      drafts.push({ kind: 'policy.denied', invocationId, grantId,
+        payload: { reason: 'usage-in-unreserved-unit', unit, declared } });
     }
 
     const finalDrafts: Draft[] = outcome === 'completed' ? drafts : drafts.filter((d) => d.kind === 'evidence.produced' || d.kind === 'policy.denied');

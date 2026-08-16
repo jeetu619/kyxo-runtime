@@ -404,7 +404,15 @@ export function hasLanded(fam: FamilyProjection, effectKey: EffectKey): boolean 
   return fam.landed.some((l) => l.effectKey === effectKey);
 }
 
-/** Remaining capacity for a unit, family-wide, across the whole grant chain. */
+/**
+ * Remaining capacity for a unit, family-wide, across the whole grant chain.
+ *
+ * A unit no grant in the chain mentions has capacity ZERO, not unlimited. A grant
+ * enumerates the authority it confers, exactly as it does for rights, so the failure mode
+ * of forgetting a unit is denial rather than an unbounded budget. This also makes adding
+ * a unit to a capability's manifest fail closed: previously-issued grants become
+ * insufficient rather than silently unlimited.
+ */
 export function remaining(fam: FamilyProjection, grantId: GrantId, unit: string): number {
   let min = Number.POSITIVE_INFINITY;
   let cur: GrantId | undefined = grantId;
