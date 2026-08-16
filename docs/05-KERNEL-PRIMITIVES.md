@@ -259,7 +259,7 @@ stateDiagram-v2
     auth_required --> canceled
     approval_required --> rejected
     budget_exceeded --> failed
-    working --> uncertain : unresolved class<br/>(crash / lease expiry after dispatch)
+    working --> uncertain : unresolved class - crash or lease expiry after dispatch
     uncertain --> completed : probe=landed | adopt-landed
     uncertain --> failed : probe=not-landed | compensate | abandon-failed
     uncertain --> uncertain : probe=unknown (stays explicit)

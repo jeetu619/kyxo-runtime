@@ -21,13 +21,16 @@
 > supersession: **a capability provider holds no kernel handle** (§8, §8a).
 
 
-**Status: V0 DRAFT (pre-adversarial-review).** This document is the normative specification of
-the Kyxo capability contract: identity, manifest grammar, discovery, probes, negotiation,
-binding, invocation lifecycle, escape hatches, and the projection of external systems onto the
-contract. It elaborates `research/DESIGN-SPINE.md` §4 (capability contract) and §3 objects 1–3
-(Capability, Binding, Invocation) and is written to be implementable against
-`prototypes/kernel/types.ts`, which realizes a strict subset of this spec. Where this document
-goes beyond the prototype, the delta is marked **[V0-OPEN]**.
+**Status: V0 DRAFT, phase-2 amended (2026-08-16).** This document is the normative specification
+of the Kyxo capability contract: identity, manifest grammar, traits, discovery, probes,
+negotiation, selection, binding, invocation lifecycle, escape hatches, and the projection of
+external systems onto the contract. It elaborates `research/DESIGN-SPINE.md` §4 (capability
+contract) and §3 objects 1–3 (Capability, Binding, Invocation) and is written to be
+implementable against `prototypes/kernel-semantics/src/` (`types.ts`, `kernel.ts`,
+`capabilities.ts`), which is the executable form of the contract and governs where prose and
+code disagree. Where this document goes beyond the prototype, the delta is marked
+**[V0-OPEN]**. *(The phase-1 prototype `prototypes/kernel/types.ts` is superseded: its provider
+contract handed every capability a live kernel handle — see §8 change #9.)*
 
 Conventions: MUST / SHOULD / MAY per RFC 2119/8174. All normative design content is OUR
 PROPOSAL by default; evidence claims carry explicit labels per `research/METHODOLOGY.md`.
@@ -280,8 +283,10 @@ family definitions (full catalogs are appendix material for V1; the load-bearing
   (data, **mandatory**: who consents, who approves — humans are never anonymous tools,
   spine §5).
 - **`remote.*`** (remote runtimes / federation) — `remote.dialect` (options: `a2a-1.0`,
-  `mcp-2026-07-28`, …); `remote.lifecycleFidelity` (options: which of Kyxo's ten Invocation
-  states the remote can represent, §10); `remote.checkpointPortability` (flag);
+  `mcp-2026-07-28`, …); `remote.lifecycleFidelity` (options: which of Kyxo's eleven Invocation
+  states the remote can represent, §6.1, §10 — `uncertain` is representable by almost nothing
+  external, which is precisely why the local side must model it);
+  `remote.checkpointPortability` (flag);
   `remote.budgetMirroring` (flag); `remote.provenance` (tiered: `none < task-level <
   artifact-level`).
 
@@ -767,7 +772,7 @@ stateDiagram-v2
     working --> ar : provider suspend (origin=provider)
     working --> apr : policy suspend (origin=policy)
     working --> be : settlement exceeds reservation (origin=kernel)
-    working --> unc : outcome unknown<br/>(crash / lease expiry)
+    working --> unc : outcome unknown - crash or lease expiry
     working --> completed
     working --> failed
     working --> canceled
@@ -900,18 +905,23 @@ provider skips the stage that stopped it, which is a policy bypass wearing a rec
 
 Two wire shapes are first-class; neither is lowered onto the other:
 
-1. **Request/response with streaming** — the default; the provider yields a typed event
-   stream (`progress`, `charge`, `artifact`, `suspend`, `result`, `fail`) terminating per the
-   lifecycle.
+1. **Request/response with streaming** — the default; the provider yields a typed proposal
+   stream (`progress`, `usage`, `artifact`, `state`, `evidence`, `external`, `delegate`) and
+   returns an outcome (`ok`, `failed`, or `suspend`) terminating per the lifecycle (§8).
 2. **Bidirectional session** — for capabilities declaring `model.state:
    session-required` or `typed-bidi` streaming: the Invocation's lifetime is a typed
    bidirectional event channel (client-sent and server-sent event vocabularies declared in
    the manifest), with session credentials minted per `model.transport` settings. Realtime
-   and Live-class APIs "break every assumption of the request/response abstraction at once"
-   and cannot be expressed as function calls — INFERENCE/HIGH, elevated to FACT/HIGH in the
-   spine (research/notes/open-model-infrastructure.md §7; research/DESIGN-SPINE.md §4). The
-   session still runs the same lifecycle: `working` for the channel's life, the same
-   interrupted states, the same terminal states.
+   and Live-class APIs "break every assumption of the request/response abstraction at once",
+   and the conclusion that they cannot be lowered onto function calls is
+   **INFERENCE/HIGH** — an inference grounded in FACTs about those transports (persistent
+   duplex channels, server-initiated turns, out-of-band interruption, ephemeral session
+   credentials), not itself a FACT (research/notes/open-model-infrastructure.md §7; amendment
+   A9(ii)). The methodology has no label-elevation mechanism, and an earlier version of this
+   sentence claimed the label had been "elevated to FACT/HIGH in the spine" — it had not, and
+   it could not have been. The design decision is unchanged on the honest label: the
+   bidirectional shape stays first-class. The session still runs the same lifecycle:
+   `working` for the channel's life, the same interrupted states, the same terminal states.
 
 **Non-chat task shapes** — `embed`, `rerank`, `classify`, `apply`, `transcribe` (and the
 rest of the `model.tasks` set) are invocation profiles with their own request/result
@@ -984,34 +994,60 @@ interface Capability {
 }
 ```
 
-The spec's actual provider contract (normative; the prototype implements the unmarked
-subset):
+The spec's actual provider contract (normative; executable form in
+`prototypes/kernel-semantics/src/types.ts`):
 
 ```typescript
 interface CapabilityProvider {
   /** §1: URN-ish id + semver + publisher + signatures + stability. */
   readonly identity: CapabilityIdentity;
 
-  /** §2: static three-tier manifest — data, indexable without executing this provider. */
+  /** §2: static three-tier manifest + §2.7 traits — data, indexable without executing this provider. */
   readonly manifest: CapabilityManifest;
 
   /** §3.3: authenticated extended manifest (A2A extended-card pattern). [V0-OPEN] */
   describe?(principal: PrincipalRef): Promise<CapabilityManifest>;
 
   /**
-   * §6: one use of a sealed Binding. Returns a typed event stream, not a value.
-   * Suspension is an event; resume re-enters with ctx.resume populated.
-   * The kernel facade in ctx is the provider's ONLY authority (no ambient authority).
+   * §6: one use of a sealed Binding.
+   *
+   * The provider YIELDS EffectProposals and RETURNS an outcome. It receives InvokeCtx,
+   * which is DATA ONLY — invocationId, executionId, an injected `now`, an attempt
+   * counter, the request, an optional resume payload, and a read-only cancellation
+   * signal. There is NO kernel handle, no journal, no artifact store, no grant table,
+   * and no delegate function on it.
+   *
+   * Delegation is itself a proposal: the provider yields {type:'delegate', ...} and the
+   * kernel runs the child under an attenuated grant, returning the outcome back into the
+   * generator. A capability therefore cannot widen authority by delegating.
    */
-  invoke(request: unknown, ctx: InvokeCtx): AsyncIterable<CapabilityEvent>;
+  invoke(ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined>;
+
+  /** §2.7: answers "did effect <key> land?" — REQUIRED iff traits.probeable. */
+  probe?(key: EffectKey): Promise<'landed' | 'not-landed' | 'unknown'>;
+
+  /** §2.7: declared compensation for a landed effect — REQUIRED iff traits.compensatable. */
+  compensate?(key: EffectKey): Promise<'compensated' | 'failed'>;
 
   /** §6.5 shape 2: bidirectional session for session-required capabilities. [V0-OPEN] */
   openSession?(config: unknown, ctx: InvokeCtx): CapabilitySession;
-
-  /** §4.1: conformance probe producing a cacheable Evidence artifact. */
-  probe?(suite: ProbeSuiteRef, ctx: ProbeCtx): Promise<ProbeReport>;
 }
 ```
+
+**The proposal channel is the whole security story.** What a provider may propose is a closed
+set — `artifact`, `state`, `usage`, `external`, `evidence`, `delegate`, `progress` — and the
+kernel validates, stages, and commits (or rejects) the set atomically at the commit barrier.
+Staged proposals are never durable: a crash mid-invocation loses candidate effects *by
+construction* rather than by cleanup (invariant I16). `progress` is advisory-plane and is
+deliberately dropped at commit; `evidence` is what the commit gate consumes, which is why a
+capability that returns "ok" while proposing a failing verdict cannot present as success
+(invariant I17).
+
+Conformance probes (§4.1) are **not** a provider method: a probe run is an ordinary Invocation
+under the `probe` task profile, so it is bound, budgeted, policy-gated and journaled like
+everything else, and its Evidence artifact is produced through the same proposal channel. The
+`probe(key)` method above is a different thing with a similar name — the *effect-landing*
+probe used to resolve `uncertain` (§6.2).
 
 Every change from the hypothesis, with its reason:
 
@@ -1020,12 +1056,65 @@ Every change from the hypothesis, with its reason:
 | 1 | `name: string` → `CapabilityIdentity` | Bare names invite identity sniffing and collision; A2A doesn't even guarantee server-name uniqueness (FACT, research/notes/mcp-protocol.md §5). Versioning, verified publisher namespace, and JCS+JWS signatures make claims attributable and pinnable (§1). |
 | 2 | `describe()` method → `manifest` as static data (+ optional authenticated `describe`) | The registry and the policy engine must index capabilities *without executing them* — VS Code's contribution-point lesson (FACT, research/notes/prior-art-negotiation-extension.md §11). Dynamic, per-principal richness moves to the extended-manifest path (§3.3). |
 | 3 | No `negotiate()` on the provider — negotiation is a kernel mechanism over manifest data | Binding is where policy and accounting attach (spine §3.2); provider-computed bindings could forge feature sets, and data-driven intersection is what lets negotiation run without instantiating the provider. LSP/MCP negotiation is likewise declarative, not code (FACT, research/notes/prior-art-negotiation-extension.md §1; research/notes/mcp-protocol.md §3). |
-| 4 | `invoke → Promise<unknown>` → `AsyncIterable<CapabilityEvent>` | Streaming is first-class, not an overload; the event vocabulary carries `charge` (budget decrements at kernel commit points), `artifact` (taint-labeled outputs), `suspend`, `progress`. Precedents: A2A's SDK contract is executor-publishes-events-to-a-queue (SOURCE-CODE OBSERVATION, research/notes/a2a-protocol.md F11); every surveyed framework independently bolted a typed step-event stream onto execution (INFERENCE/HIGH, research/notes/agent-frameworks-crewai-pydantic-llamaindex-mastra-letta.md §7). |
+| 4 | `invoke → Promise<unknown>` → an async generator of **EffectProposals** | Streaming is first-class, not an overload; the proposal vocabulary carries `usage` (metered against the reservation and settled at outcome — amendment A2; the provider reports units, it never charges a grant), `artifact` (taint-labeled outputs, promoted only at commit), `evidence`, `external`, `delegate`, `progress`. Precedents: A2A's SDK contract is executor-publishes-events-to-a-queue (SOURCE-CODE OBSERVATION, research/notes/a2a-protocol.md F11); every surveyed framework independently bolted a typed step-event stream onto execution (INFERENCE/HIGH, research/notes/agent-frameworks-crewai-pydantic-llamaindex-mastra-letta.md §7). |
 | 5 | Suspension/resume/cancel are protocol, not methods | Suspend is a typed event with sealed continuation state (§6.4); resume is kernel-mediated re-entry (`ctx.resume`), matching A2A's return-and-reinvoke executor semantics and MCP MRTR's stateless continuations (FACT, research/notes/a2a-protocol.md F11; research/notes/mcp-protocol.md §7). Cancel is cooperative: the kernel owns the state machine, the provider observes a cancellation signal. |
-| 6 | `probe` added | Declared ≠ competent (spine §1 C3): probes are the second information source, producing cacheable Evidence artifacts (§4.1). |
-| 7 | `openSession` added | Bidirectional session capabilities cannot be lowered onto request/response (FACT/HIGH, spine §4; research/notes/open-model-infrastructure.md §7). |
+| 6 | probing added, in two distinct forms | Declared ≠ competent (spine §1 C3): *conformance* probes are the second information source, run as ordinary invocations producing cacheable Evidence artifacts (§4.1); the *effect-landing* `probe(key)` method resolves `uncertain` outcomes (§2.7, §6.2). Same word, different jobs; the manifest's `probeable` trait refers to the latter. |
+| 7 | `openSession` added | Bidirectional session capabilities cannot be lowered onto request/response — INFERENCE/HIGH grounded in transport FACTs (amendment A9(ii); research/notes/open-model-infrastructure.md §7). |
 | 8 | `destroy()` dropped | Lifecycle belongs to cells and leases (spine §3.6), not provider self-management; environment teardown is an `env.lifecycle` axis verb invoked like anything else. |
-| 9 | `ctx.kernel` facade injected per invocation | Object-capability discipline: the provider's entire authority is what it is handed — no ambient kernel access, and composite capabilities (harnesses, graph strategies) delegate through the facade under their own attenuated Grants (FACT on the ocap convergence, research/notes/prior-art-negotiation-extension.md §7). |
+| 9 | **`ctx.kernel` facade removed; `InvokeCtx` is data-only** | Superseded correction. The ocap reasoning was right — a provider's authority must be exactly what it is handed — but a callable kernel handle is still ambient authority relative to the commit barrier: any code path reachable from the provider could append to the journal, promote an artifact, or delegate outside the staging discipline, so the barrier was cooperative rather than structural. The fix is to hand the provider *no* object: it proposes, and the kernel disposes (§8, §8a). Composite capabilities (harnesses, graph strategies) delegate by *proposing* a delegation, which the kernel executes under an attenuated grant — same ocap conclusion, enforced instead of requested. *(Retained rather than deleted because the failure mode it corrects — "we gave the untrusted thing a handle, but only a small one" — is the single most repeated mistake in this class of system.)* |
+
+## 8a. The frozen facade (normative; amendment A4)
+
+Wire schemas alone do not make a substrate replaceable: two implementations can agree on every
+event shape and still be mutually unusable if the *surface* userland calls differs. Amendment
+A4 therefore promotes the facade to a **Wave-0 frozen, versioned, conformance-tested contract**,
+alongside the record format. It has two halves with deliberately different shapes.
+
+### 8a.1 Host and strategy facing — `KernelApi` / `HarnessCtx`
+
+The verb list is normative and closed for the freeze. It was decided by what the four
+prototypes demonstrably needed, not by what looked complete:
+
+| Verb | Notes |
+|---|---|
+| `bind` | §5. Takes requirements + a Grant handle; returns a Binding handle with sealed guarantee grades. |
+| `invoke` | §6. Async-first; effect key is derived content-inclusively. |
+| `resume` | §6.4, with a **re-grant option** for `origin: kernel` (budget) suspensions. |
+| `cancel` | Journals the request whether or not it is honored (A10). |
+| `attenuate` | Mints a child grant ≤ parent's *remaining*; the only way authority moves. |
+| `getGrant` | **Handle-shaped** (A8) — returns the state of a grant you already hold; it is not a lookup that turns an id into authority. |
+| `charge` | Records metered usage against the reservation; settlement happens at outcome commit (A2). |
+| `storeArtifact` / `readArtifact` | Content-addressed; storage journals provenance per producing invocation (A10). |
+| scoped journal read | Scoped: a reader sees its own lineage, not the whole plane. |
+| `checkpoint` | Cuts at the last committed sequence; see doc 05 §2.8 for the record shape. |
+| `createCell` | Children get fresh cells (A10). |
+| `listCapabilities` | Discovery over manifests (§3). |
+| Kind verbs | `registerKind`, `createKindObject`, `getKindObject`, `watch`. |
+| injected clock | A verb, not an import: a strategy that reads a wall clock is a strategy whose replay diverges. |
+
+Freezing this list has a price we accept: adding a verb after Wave 0 is a protocol revision
+with conformance fixtures, not a minor release. That is the point — ADR-010's claim that the
+reference implementation is replaceable is scoped to the execution record *until* facade
+conformance fixtures exist, and this freeze is what removes the qualifier.
+
+### 8a.2 Capability facing — `InvokeCtx` + `EffectProposal`
+
+The capability-facing half of the facade is not a verb list at all. It is a data record in and
+a proposal stream out (§8). The mapping from the old facade calls to the new proposals is
+exact, and worth stating because it is how a phase-1 provider is ported:
+
+| Old `ctx.kernel` call | New form |
+|---|---|
+| `ctx.kernel.storeArtifact(x)` | `yield { type: 'artifact', content: x, labels }` — promoted at commit, not before |
+| `ctx.kernel.charge(units)` | `yield { type: 'usage', units }` — metered against the reservation; the kernel settles |
+| `ctx.kernel.invoke(child, req)` | `yield { type: 'delegate', capabilityId, request, step }` — the kernel attenuates and runs it, and the outcome comes back into the generator |
+| `ctx.kernel.setState(k, v)` | `yield { type: 'state', key, value }` |
+| `ctx.kernel.emit(evidence)` | `yield { type: 'evidence', verdict, detail }` |
+| `ctx.kernel.journal.append(...)` | **No equivalent. Deliberately.** Capabilities do not write truth. |
+
+Conformance fixtures for both halves are Wave-0 exit criteria: an implementation claiming the
+Kyxo facade must pass them, and a capability claiming a trait must pass the obligation tests
+for that trait (§2.7, §9.4).
 
 ## 9. Versioning and evolution
 
@@ -1092,7 +1181,7 @@ research/notes/mcp-protocol.md §5).
 | `ToolAnnotations` (`readOnlyHint`, `destructiveHint`, …) | mapped to **advisory** axes on import (MCP marks them untrusted); promotion to enforced `tool.effect` requires probe Evidence or publisher signature |
 | `tools/call` → `resultType: "complete"` | `working → completed` |
 | MRTR `resultType: "input_required"` + `requestState` | `working → input-required`; `inputRequests` become the suspension payload; `requestState` is the sealed continuation blob, echoed verbatim (§6.4) |
-| Tasks extension (`working / input_required / completed / failed / cancelled`) | direct lifecycle projection; `submitted`, `rejected`, `auth-required`, `approval-required`, `budget-exceeded` are unrepresentable on the MCP side and declared in `remote.lifecycleFidelity` |
+| Tasks extension (`working / input_required / completed / failed / cancelled`) | direct lifecycle projection; `submitted`, `rejected`, `auth-required`, `approval-required`, `budget-exceeded`, `uncertain` are unrepresentable on the MCP side and declared in `remote.lifecycleFidelity`. A remote that cannot express `uncertain` does not thereby make outcomes certain — the local side holds the unresolved state and resolves it by probe or disposition (§6.2) |
 | Elicitation (form / URL modes) | delegated to a bound `human.*` capability — only the host owns the user (INFERENCE/HIGH, research/notes/mcp-protocol.md §6) |
 | `_meta` extension keys | extension-tier passthrough (§7 layer 3), negotiated per Binding |
 | OAuth 2.1 RS + scopes | out-of-band credential acquisition recorded on the Binding's Grant route; MCP capabilities are feature declarations, never authority (FACT, research/notes/mcp-protocol.md §3, §11) — Grants remain Kyxo-side |
@@ -1114,14 +1203,23 @@ maps `contextId` (spine §3.6).
 | `TASK_STATE_AUTH_REQUIRED` (+ escalation chaining) | `auth-required`, chaining upward through Kyxo's delegation tree with typed payloads — the generalization A2A itself concedes is undefined (§7.6.4) (FACT, research/notes/a2a-protocol.md F9) |
 | `Artifact` / `TaskArtifactUpdateEvent` | Artifacts with provenance; A2A's explicitly-punted artifact lineage (FACT, F4) is recorded Kyxo-side |
 | streams / push configs | advisory plane; recovery is snapshot-first re-subscribe (F5) with the journal as Kyxo-side truth |
-| `approval-required`, `budget-exceeded`, Grants, deadlines | absent in A2A (FACT-by-absence, F13); expressed to conformant peers via a Kyxo A2A extension URI, else confined to the local side of the boundary |
+| `approval-required`, `budget-exceeded`, `uncertain`, Grants, deadlines | absent in A2A (FACT-by-absence, F13); expressed to conformant peers via a Kyxo A2A extension URI, else confined to the local side of the boundary. Because a remote peer reports only certainty, an A2A invocation that loses its connection after dispatch is exactly the `uncertain` case, resolved locally via `remote.*` probing or an explicit disposition |
 
 ### 10.3 Provider model APIs
 
 A model adapter (spine §2: a *code-bearing* plugin — encode/decode duties, per the
 vLLM/SGLang parser-plugin evidence, FACT, research/notes/open-model-infrastructure.md §3)
-instantiates the `model.*` catalog. Illustrative bindings of real targets, per the evidence
-in research/notes/open-model-infrastructure.md:
+instantiates the `model.*` catalog.
+
+**Scope of what ships (amendment A14, roster per A7).** The MVP builds four adapters —
+Anthropic Messages, OpenAI Responses, **Gemini**, and one OpenAI-compat adapter that carries a
+vLLM manifest and an Ollama manifest — and their conformance-derived manifests are the entire
+first-party catalog (§3.4). The sketches below are *illustrative axis assignments derived from
+the research notes*, not shipped conformance results: an axis becomes a probe-backed claim only
+when an Evidence artifact from a recorded probe run backs it, and until then it is
+`declared`-grade (§2.3a). The Gemini adapter is on the roster and absent from these sketches
+only because the note material below predates it; that is a documentation gap, not a scope
+change.
 
 - **Anthropic Messages**: `model.state: stateless`; `model.reasoning.replay:
   signature-verified`; `model.reasoning.budget: effort`; `model.caching:
@@ -1175,3 +1273,32 @@ carve-out from signed/hashed records (§5.5); the `min` quantitative predicate a
 `submitted → failed` gap (§6.2); q-weighted preferences deferred (§5.2); the exact axis
 catalogs for `env.*`/`harness.*` families are load-bearing-sampled here and completed in
 12-EXTENSION-MODEL.md.
+
+Added by the phase-2 amendment pass: the `TelemetryView` schema is frozen at Wave 0 but its
+consumers are Wave-3 (§4.4 rule 4), so the first real test of the selection contract is a
+strategy nobody has written yet; and the guarantee-grade computation (§5.3 step 5) needs a
+normative rule for *where the mediation waterline sits* in mixed deployments — a locally
+sandboxed tool invoked by a delegated vendor harness is `enforced` on the effect and
+`declared` on the invocation decision, and the grading of that composite is not yet specified.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendment reconciliation against `research/DESIGN-SPINE.md` A1–A14 and the executable semantics
+in `prototypes/kernel-semantics/src/`. Edits were surgical; superseded mechanism statements were
+corrected in place and the reasoning that forced each change was retained and marked.
+
+| Amendment | Change |
+|---|---|
+| **A2** | §6.2 transition table: `submitted → budget-exceeded` is now *reservation refused at admission* and `working → budget-exceeded` is *settlement exceeding the reservation*; `completed`/`failed` rows state the `grant.settled` + `grant.released` commit. §6.1 diagram relabeled. §8 change #4: the provider proposes `usage`; it never charges a grant. §8a.1: `charge` records metered usage, settlement at outcome. |
+| **A3** | New §2.3a *Guarantee grades* — `enforced`/`observed`/`declared`, explicitly disambiguated from the axis-level `enforcement` field (they answer different questions), with the mediation-waterline rule, the no-silent-widening rule, and per-property (not per-capability) grading. §5.3 gains a grade-computation step; §5.7 Binding record gains mandatory `guarantees` + `guaranteeEvidence`. |
+| **A4** | New §8a *The frozen facade*: §8a.1 the host/strategy-facing `KernelApi`/`HarnessCtx` verb list frozen at Wave 0 (bind, invoke, resume-with-re-grant, cancel, attenuate, getGrant, charge, storeArtifact/readArtifact, scoped journal read, checkpoint, createCell, listCapabilities, Kind verbs, injected clock) with the cost of freezing stated; §8a.2 the capability-facing half as data-in/proposals-out, including the exact port mapping from every former `ctx.kernel` call. |
+| **A8** | §5.2: the bind request carries no grant id — authority is a kernel-minted handle passed alongside, and the old `"grantId": "grant_7f…"` line is called out as superseded. §5.3 step 1: handle-identity check precedes rights check. §5.7: `grantId` → **`grantRef`**, a non-resolvable audit identifier, with the consequence (the truth plane carries no credentials) stated. |
+| **A9(ii)** | §6.5: the Realtime/Live claim is relabeled **INFERENCE/HIGH grounded in transport FACTs**; the "elevated to FACT/HIGH in the spine" phrasing is deleted and explicitly disavowed (no elevation mechanism exists in the methodology). §8 change #7 relabeled to match. Conclusion unchanged. |
+| **A10** | §2.2: tiered axes MUST carry their ordered ladder as manifest **data**; missing ladder invalidates the manifest; kernel holds no axis semantics. §6.4: suspension `origin` discriminator table (provider/policy/kernel) with distinct resume semantics and the bypass failure it prevents. §6.2: cancellation *requests* journaled whether or not honored. |
+| **A11** | §6.3: side-by-side contract table separating the bounded reliability dedup window (correctness, TTL ≥ retry horizon, lineage-scoped effect key) from the content-keyed replay cache (optimization, indefinite, policy-governed); suppression always journals evidence. |
+| **A13** | New §4.4 *The selection contract*: `rank(candidates, telemetry, policy) → choice + journaled rationale`, with the five normative rules (eligibility not re-litigated, rationale journaled, V1 default = declared preference order + probe freshness, telemetry ranking Wave-3 with the schema frozen now, selection cannot launder a guarantee grade). §4 diagram redrawn to separate kernel negotiation from userland selection; §4.3 rule 3 cross-referenced; §5.7 Binding record gains a `selection` block. |
+| **A14** | New §3.4 *What the catalog actually promises*: conformance-derived manifests for the four MVP adapters only (roster per A7, including Gemini); community catalog is a governance deliverable; enforcement badges only on probe-backed axes with mandatory `declared` labelling elsewhere; curation cost stated as per-target and ongoing. §10.3 scoped: the target sketches are illustrative, not shipped conformance results. |
+| **Traits** | New §2.7 *Capability traits*: the closed set the executable kernel branches on (`effectClass`, `probeable`, `compensatable`, `resumable`, `streaming`, `cancellable`, `externallyStateful`), the obligations each declaration creates, and §2.7.1 arguing why branching on declared traits is not branching on capability kind (identity vs declared property; closed versioned vocabulary vs open growing one; traits cut across kinds; traits are falsifiable) with the practical test — no identifier naming a capability category appears in kernel source. |
+| **Executable semantics** | §8: `CapabilityProvider.invoke` is an async generator of `EffectProposal`s returning a `CapabilityResult`; `InvokeCtx` is data-only with no kernel handle; `probe(key)`/`compensate(key)` added as trait obligations; conformance probes clarified as ordinary invocations rather than a provider method; the staging/commit-barrier properties (I16, I17) stated. §8 change #9 rewritten from "`ctx.kernel` facade injected" to "facade removed", retaining the superseded reasoning. §6.1: `uncertain` added as the eleventh state with its dispositions, diagram, and the executable-vs-protocol state-name mapping; §6.2 gains the three `uncertain` rows; §2.5 `remote.lifecycleFidelity` and §10.1/§10.2 projections updated; header status and prototype references repointed from `prototypes/kernel/` to `prototypes/kernel-semantics/`. |
