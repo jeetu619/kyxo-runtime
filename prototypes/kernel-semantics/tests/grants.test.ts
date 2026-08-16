@@ -111,6 +111,40 @@ test('budget exhaustion denies admission before dispatch, with a journal record'
   assertInvariants({ kernel: k, storage }, 'budget exhaustion');
 });
 
+test('sibling grants may overcommit limits, but chain spend is still bounded (thin provisioning)', async () => {
+  const { k, storage } = setup();
+  const e = k.createExecution();
+  const parent = k.issueGrant(e, { rights: ['compute'], limits: { invocations: 5, spawnDepth: 3 } });
+
+  // Ten siblings each declaring 4 invocations from a parent holding 5. Attenuation
+  // checks each child against the parent independently, so limits may sum beyond it.
+  const kids = [];
+  for (let i = 0; i < 10; i += 1) {
+    kids.push(k.attenuate(e, parent, { rights: ['compute'], limits: { invocations: 4, spawnDepth: 1 } }));
+  }
+  const declared = kids.length * 4;
+  assert.ok(declared > 5, 'sibling limits are ceilings, not reservations — they may overcommit');
+
+  // Now let every sibling try to spend its full declared budget.
+  let succeeded = 0;
+  for (let i = 0; i < kids.length; i += 1) {
+    for (let j = 0; j < 4; j += 1) {
+      try {
+        await k.invoke(e, 'tool.calc', { a: i, b: j }, kids[i]!, { step: `k${i}-${j}` });
+        succeeded += 1;
+      } catch (err) {
+        if (!(err instanceof BudgetError) && !(err instanceof AuthorizationError)) throw err;
+      }
+    }
+  }
+
+  // THE GUARANTEE: actual spend never exceeds the parent, however many children exist.
+  assert.equal(succeeded, 5, 'the chain admits exactly the parent budget, no matter how many siblings');
+  const p = [...k.state(e).grants.values()].find((x) => x.parent === undefined)!;
+  assert.equal(p.settled['invocations'], 5);
+  assertInvariants({ kernel: k, storage }, 'sibling overcommit');
+});
+
 test('revocation is transitive and evaluated at time of use', async () => {
   const { k, storage } = setup();
   const e = k.createExecution();

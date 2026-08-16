@@ -22,13 +22,13 @@ KYXO_FUZZ_SEEDS=400 KYXO_FUZZ_LENGTH=60 node --experimental-strip-types kernel-s
 | Suite | Tests | What it establishes |
 |---|---|---|
 | `crash.test.ts` | 6 | Systematic crash sweep (16 write points × clean/torn = 32 recoveries) + landed-but-unrecorded effects, unknown probes, compensation, safe re-lease, checkpoint consistency |
-| `fork.test.ts` | 7 | Cut isolation, parent immutability, protected-effect refusal, explicit override, mandatory dispositions, sibling and nested independence, crash-during-fork, resume-vs-fork distinction |
+| `fork.test.ts` | 8 | Cut isolation, parent immutability, protected-effect refusal, explicit override, mandatory dispositions, sibling and nested independence, crash-during-fork, resume-vs-fork distinction |
 | `dedup.test.ts` | 5 | Six mechanisms kept distinct; CAS dedup preserves per-producer provenance; content-inclusive effect keys; budget not double-charged |
-| `grants.test.ts` | 10 | Handle forgery (3 attacks), attenuation limits, lineage accounting, admission denial, transitive revocation, expiry, fork-vs-revocation, delegation attenuation, two recursion bounds |
+| `grants.test.ts` | 11 | Handle forgery (3 attacks), attenuation limits, lineage accounting, admission denial, transitive revocation, expiry, fork-vs-revocation, delegation attenuation, two recursion bounds |
 | `universality.test.ts` | 5 | Eight heterogeneous constructs on one path, static no-type-branching gate, malicious capability containment, deny-class policy, mixed-class checkpoint/fork/recovery |
 | `property.test.ts` | 3 | 120 seeded sequences × 40 ops with per-operation invariant assertion and a delta-debugging minimizer; differential agreement with the reference model on outcomes, budgets and fork isolation |
 | `coverage.test.ts` | 1 | 150 seeds × 30 ops with a distribution guard that fails if interesting states stop being reached |
-| **Total** | **37** | all passing; TypeScript strict, zero runtime dependencies |
+| **Total** | **39** | all passing; TypeScript strict, zero runtime dependencies |
 
 **Volume per full run:** 4,500 coverage operations + 4,800 property operations + 32
 crash-point recoveries, with a complete invariant check after **every** operation
@@ -57,7 +57,7 @@ generator degenerates.
 
 ## 2. Design falsifications (the substance of this phase)
 
-Five defects were found by execution. Each was a *design* error, not a typo — four of
+Seven findings emerged from execution. Each was a *design* error, not a typo — four of
 them existed in the written specification and would have been frozen into the record
 format.
 
@@ -120,6 +120,38 @@ resident in a live kernel.
 **Fix.** Staging is released on every exit path before rethrowing.
 **Note.** This is the one falsification that only randomized testing found; no
 hand-written scenario reached it.
+
+### F-6 — Irreversible-effect protection did not survive a process restart
+**Found by:** an attack script written while adversarial review #2 was running (the
+author attacking the author's own fix).
+**What happened.** The F-1 protection lived in two in-memory structures. Recovery
+rebuilt the effect index with a hardcoded `effectClass: 'pure'` and never restored the
+protected-effect set. After a restart, a fork taken from a fresh checkpoint reported
+`completed / deduplicated` for an irreversible charge it had never performed — F-1
+returning through the recovery door, invisible to every existing test because none
+combined *restart* with *fork* on an irreversible effect.
+**Fix.** Recovery rebuilds the true effect class from the committed `invocation.admitted`
+record and re-derives `protectedEffects` from committed outcomes, including effects that
+landed under an invocation that later failed (the world still saw them).
+**Lesson recorded.** Any protection held in memory must be re-derivable from committed
+evidence, or it is a protection that lasts until the next crash. This is now a review
+question for every future kernel invariant.
+**Now enforced by:** `fork.test.ts` — "irreversible-effect protection survives a process
+restart".
+
+### F-7 — Grant limits are ceilings, not reservations (specification gap, not a defect)
+**Found by:** an attack script probing sibling delegation.
+**What happened.** A parent holding 5 invocations can mint ten children each declaring 4
+— sibling limits sum to 40. This looked like an authority hole. Investigation showed
+actual spend is correctly bounded (40 attempts, 5 admitted, parent settled exactly 5),
+because admission checks every grant in the chain. So the mechanism is sound but the
+*documentation implied a guarantee it does not give*: developers would read a grant's
+limit as reserved budget.
+**Fix.** No code change. The semantics are now specified explicitly (doc 17 §9a) as thin
+provisioning, with the real guarantee stated and tested.
+**Why it is recorded as a finding.** A misunderstood guarantee is a defect in the
+contract even when the code is right — and this one would have produced production
+surprises of the form "my subagent had budget but was denied".
 
 ---
 

@@ -488,10 +488,61 @@ Normative consumption order:
    required axis is ineligible — never "eligible with degradation".
 2. **Probed** Evidence MAY be required by policy before first binding (a policy stage
    `require-evidence(suiteId)`), and stale/failed Evidence removes eligibility.
-3. **Observed** telemetry drives *selection* among eligible targets and MAY trigger
+3. **Observed** telemetry drives *selection* among eligible targets (§4.4) and MAY trigger
    advisory-plane alerts (e.g. declared tier contradicted by outcomes), but telemetry alone
    MUST NOT expand eligibility beyond declarations. Degrading a declared-but-failing
    capability is a policy decision, journaled, never a silent kernel action.
+
+### 4.4 The selection contract (normative; amendment A13)
+
+Negotiation and selection are different jobs and live in different places. Bind-time
+negotiation (§5) is a kernel mechanism and answers a yes/no question: **which candidates are
+eligible?** Choosing among the eligible is a judgement call with plural correct answers —
+cheapest, fastest, most reliable, least egress, most recently probed — and therefore belongs
+in userland, as a **routing strategy** (which is itself a capability, so it is versioned,
+benchmarkable and replaceable like any other).
+
+The contract is fixed even though the policy is not:
+
+```typescript
+interface RoutingStrategy {
+  rank(
+    candidates: readonly EligibleCandidate[],   // output of negotiation; never re-litigated
+    telemetry: TelemetryView,                   // journal projection, §4.2
+    policy: PolicyView,                         // sealed constraints the choice must respect
+  ): { choice: EligibleCandidate; rationale: Rationale };
+}
+```
+
+Normative rules:
+
+1. **Eligibility is not negotiable by the strategy.** `rank` MUST return one of the candidates
+   it was given. A strategy cannot resurrect a candidate negotiation excluded, and it cannot
+   invent a degraded configuration — degradation is an explicit re-bind with weaker
+   requirements (§5.6).
+2. **The rationale is journaled with the binding.** Every selection emits the chosen candidate,
+   the rejected ones, and the reason — the inputs that decided it (declared preference
+   position, probe freshness, the telemetry window consulted). "Why did it pick that model?"
+   is a truth-plane question with a recorded answer, not an archaeology exercise. Where a
+   model-judge participates in a selection that gates an effect, its verdict is journaled with
+   an input hash (amendment A12).
+3. **V1 default strategy: declared preference order + probe freshness.** The default ranks by
+   the consumer's declared preference list, breaking ties toward the candidate with the most
+   recent valid probe Evidence, and refuses candidates whose Evidence has expired past the
+   policy's staleness bound. It deliberately does not use outcome telemetry — this keeps V1
+   selection deterministic and explainable while the telemetry schema settles.
+4. **Telemetry-driven ranking is Wave-3 scope with its schema frozen now.** The `TelemetryView`
+   shape (per `(capabilityId, version, consumer identity, negotiated axis configuration)`
+   outcome statistics, §4.2) is frozen at Wave 0 so that journals recorded from V1 onward are
+   usable by the Wave-3 strategies; only the *ranking* is deferred, not the *recording*.
+5. **Selection MUST NOT be able to widen authority or guarantee grades.** The chosen
+   candidate's Binding carries its own grades (§2.3a); a strategy that prefers a `declared`-grade
+   remote over an `enforced`-grade local one is making a policy-visible trade, and the policy
+   pipeline may forbid it. Preference never launders a grade.
+
+This closes the C3 hole the design spine left open: "declarations gate eligibility, telemetry
+drives selection" was a slogan with no contract behind it (research/DESIGN-SPINE.md §1 C3).
+The contract above is the missing half.
 
 ## 5. Negotiation and Binding
 
@@ -508,10 +559,17 @@ on capabilities the client has not declared", with a typed error) — FACT
 
 ### 5.2 Requirement expressions
 
+A bind request names the capability and carries requirements; **authority is supplied as a
+kernel-minted Grant handle passed alongside the request, never as an identifier inside it**
+(amendment A8). The JSON below is the serialized *requirements* half — the wire form of what is
+negotiated. It deliberately contains no grant field: an id string in a document is not
+authority, and a kernel that accepted one would be committing the sin ADR-013 exists to
+forbid. (Earlier drafts of this section showed `"grantId": "grant_7f…"` in this position; that
+is superseded.)
+
 ```json
 {
   "capabilityId": "cap:com.anthropic/messages-adapter",
-  "grantId": "grant_7f…",
   "requirements": [
     { "axis": "model.tasks",            "need": "one-of", "anyOf": ["chat"] },
     { "axis": "model.structured",       "need": "tier-at-least", "tier": "json-schema-subset" },
@@ -535,18 +593,28 @@ optional/required covers the observed use cases; q-weighting is additive later
 
 Given requirements R and manifest M, `bind()` MUST:
 
-1. Verify the Grant covers `invoke:<capabilityId>` (rights check precedes everything;
-   negotiation never substitutes for authority — declaration and capability-authority are
-   orthogonal primitives, research/notes/prior-art-negotiation-extension.md, synthesis).
+1. Verify the presented **Grant handle** is one this kernel minted (handle identity is the
+   authority check — amendment A8; a handle the kernel does not recognize is rejected without
+   consulting its contents), then verify the grant it names covers `invoke:<capabilityId>` and
+   is neither revoked nor expired. The rights check precedes everything; negotiation never
+   substitutes for authority — declaration and capability-authority are orthogonal primitives
+   (research/notes/prior-art-negotiation-extension.md, synthesis).
 2. For each non-optional requirement in R: locate the axis in M's *enforced* axes; evaluate
    the predicate; on failure, **fail the bind** with a typed `BindError` naming every
    unsatisfied requirement (all failures reported, not first-failure).
 3. For each optional requirement: evaluate; on failure record the axis in `absentOptional`.
 4. Record every enforced axis in M not mentioned by R in `ignoredAxes`
    (must-ignore-unknown, §5.4).
-5. Evaluate the policy pipeline's bind-phase stages; seal the surviving stage route.
-6. Emit `binding.created` (or `binding.rejected`) to the journal and return the sealed
-   Binding.
+5. Compute the **guarantee grade** of every negotiated property (§2.3a): `enforced` where the
+   property is realised below the mediation waterline, `observed` where valid probe Evidence
+   or reconciling telemetry backs it, `declared` otherwise. Grades are computed, never
+   supplied by the target.
+6. Evaluate the policy pipeline's bind-phase stages; seal the surviving stage route. Stages
+   see the grades, so "no `declared`-grade capability may hold a destructive-effect binding"
+   is expressible as policy rather than as folklore.
+7. Emit `binding.created` (or `binding.rejected`) to the journal — carrying the
+   **non-resolvable** grant reference for attribution — and return the sealed Binding together
+   with its handle.
 
 ### 5.4 The asymmetric tolerance rules
 
@@ -601,24 +669,59 @@ and the journal shows both the failure and the retreat.
   "capabilityId": "cap:com.anthropic/messages-adapter",
   "capabilityVersion": "3.2.0",
   "manifestHash": "sha256:9f2c…",
-  "grantId": "grant_7f…",
+  "grantRef": "gref_7f…",
   "negotiated": {
     "model.tasks": "chat",
     "model.structured": "json-schema-subset",
     "model.reasoning.replay": "signature-verified"
   },
+  "guarantees": {
+    "budget.metering":        "enforced",
+    "model.structured":       "observed",
+    "model.reasoning.replay": "observed",
+    "effect.class":           "declared",
+    "data.residency":         "declared"
+  },
+  "guaranteeEvidence": {
+    "model.structured":       "artifact:sha256:1b7e…",
+    "model.reasoning.replay": "artifact:sha256:c40a…"
+  },
+  "traits": {
+    "effectClass": "external-idempotent",
+    "probeable": true, "compensatable": false, "resumable": true,
+    "streaming": true, "cancellable": true, "externallyStateful": false
+  },
   "ignoredAxes": ["model.caching", "model.resources"],
   "absentOptional": ["model.caching"],
   "policyRoute": ["deny-destructive-without-approval", "taint-propagation", "budget-precheck"],
   "requirementsHash": "sha256:aa10…",
+  "selection": {
+    "strategy": "cap:io.kyxo/routing.preference-order@1.0.0",
+    "rejected": ["cap:com.openai/responses-adapter"],
+    "rationale": "declared-preference[0]; probe evidence 4h old, within 24h bound"
+  },
   "grease": ["zz-grease.4f21"],
   "createdAt": "2026-08-16T09:12:04Z"
 }
 ```
 
+Three fields deserve emphasis:
+
+- **`grantRef` is a non-resolvable identifier (amendment A8).** It attributes the binding to an
+  authority for audit; it cannot be exchanged for that authority. The authority itself is the
+  kernel-minted handle held by whoever bound, and possession of the handle *is* the right to
+  invoke. This is why the sealed record — and the journal events derived from it — are safe to
+  export, mirror, and show an operator: nothing in the truth plane is a credential.
+- **`guarantees` is mandatory (amendment A3)**, one grade per policy-relevant property, with
+  `guaranteeEvidence` referencing the Evidence artifact for every `observed` entry. An
+  `observed` grade with no Evidence reference is invalid.
+- **`selection` records the choice, not just the outcome (amendment A13)** — which strategy
+  ranked, which candidates lost, and why (§4.4).
+
 The Binding is a kernel object (spine §3.2) and is immutable once sealed. Policy and
 accounting attach here; a userland-forged Binding is the attack this object exists to
-prevent. Mid-session capability change (a `capability.removed` event for a bound target)
+prevent — which is why userland receives a Binding *handle* rather than a document it could
+reconstruct. Mid-session capability change (a `capability.removed` event for a bound target)
 does not mutate the Binding: it invalidates it, and affected Invocations fail loudly with a
 `BindingInvalidated` error — re-binding is the recovery verb.
 
@@ -626,9 +729,10 @@ does not mutate the Binding: it invalidates it, and affected Invocations fail lo
 
 ### 6.1 The closed lifecycle
 
-An Invocation is one use of a Binding. Its lifecycle is a **closed transition algebra**: ten
-states, four interrupted, four terminal, and a transition table outside of which any
-transition is a `TransitionError`. This extends A2A's nine-state machine — which classifies
+An Invocation is one use of a Binding. Its lifecycle is a **closed transition algebra**:
+eleven states — four interrupted, four terminal, one unresolved (`uncertain`), plus
+`submitted` and `working` — and a transition table outside of which any transition is a
+`TransitionError`. This extends A2A's nine-state machine — which classifies
 `input-required`/`auth-required` as interrupted and `completed`/`failed`/`canceled`/
 `rejected` as terminal but deliberately leaves the transition graph permissive (FACT +
 INFERENCE/HIGH, research/notes/a2a-protocol.md F2) — in two ways: two new interrupted states
@@ -638,22 +742,32 @@ Kyxo owns both sides of the boundary and can afford strictness A2A could not (A2
 permissiveness is a consequence of executor opacity; ours is not needed since providers
 signal through typed events, not free state writes).
 
+The eleventh state is `uncertain` (amendment A1 and the executable semantics): an invocation
+whose external effect may or may not have landed, because the process died between dispatch
+and outcome or a lease expired mid-flight. It is neither interrupted (nothing is waiting to be
+supplied) nor terminal (nothing is known), and it exists so the kernel never has to guess.
+Resolution is an explicit journaled disposition — `probe`, `adopt-landed`, `compensate`, or
+`abandon-failed` — and a probe answering `unknown` legitimately leaves the invocation
+`uncertain`.
+
 ```mermaid
 stateDiagram-v2
     state "input-required" as ir
     state "auth-required" as ar
     state "approval-required" as apr
     state "budget-exceeded" as be
+    state "uncertain" as unc
     [*] --> submitted
     submitted --> working : dispatch
     submitted --> rejected : declined
     submitted --> canceled
     submitted --> apr : pre-work approval
-    submitted --> be : admission charge fails
-    working --> ir : provider suspend
-    working --> ar : provider suspend
-    working --> apr : policy suspend
-    working --> be : commit charge fails
+    submitted --> be : reservation refused (A2)
+    working --> ir : provider suspend (origin=provider)
+    working --> ar : provider suspend (origin=provider)
+    working --> apr : policy suspend (origin=policy)
+    working --> be : settlement exceeds reservation (origin=kernel)
+    working --> unc : outcome unknown<br/>(crash / lease expiry)
     working --> completed
     working --> failed
     working --> canceled
@@ -663,6 +777,9 @@ stateDiagram-v2
     apr --> rejected : denied
     be --> working : re-grant
     be --> be : re-grant insufficient
+    unc --> completed : probe=landed | adopt-landed
+    unc --> failed : probe=not-landed | compensate | abandon-failed
+    unc --> unc : probe=unknown
     ir --> canceled
     ir --> failed : deadline
     ar --> canceled
@@ -677,6 +794,15 @@ stateDiagram-v2
     rejected --> [*]
 ```
 
+**Naming note.** The executable kernel records this algebra with a smaller state vocabulary —
+`admitted`, `dispatched`, `suspended`, `uncertain`, `completed`, `failed`, `canceled` — where
+the suspension *reason* plus its `origin` discriminator (§6.4) carries what the named states
+above express: `input-required`/`auth-required` are `suspended{origin: provider}`,
+`approval-required` is `suspended{origin: policy}`, `budget-exceeded` is
+`suspended{origin: kernel}`. The two are the same algebra at different resolutions; where they
+appear to differ, `prototypes/kernel-semantics/src/types.ts` governs. The protocol-facing
+names are retained here because A2A and MCP-tasks projections (§10) map onto them directly.
+
 ### 6.2 Transition table (normative)
 
 | From | To | Trigger |
@@ -685,14 +811,18 @@ stateDiagram-v2
 | `submitted` | `rejected` | provider or deny-class policy stage declines before work |
 | `submitted` | `canceled` | caller cancels before dispatch |
 | `submitted` | `approval-required` | policy stage requires approval before work starts |
-| `submitted` | `budget-exceeded` | admission charge against the Grant fails |
+| `submitted` | `budget-exceeded` | **reservation** against the Grant chain fails at admission (`grant.denied`; amendment A2 — refusal happens *before* spend, not after) |
 | `working` | `input-required` | provider yields `suspend(input-required, payload)` |
 | `working` | `auth-required` | provider yields `suspend(auth-required, payload)` |
 | `working` | `approval-required` | policy stage suspends at an effectful invocation point |
-| `working` | `budget-exceeded` | kernel commit-point charge fails |
-| `working` | `completed` | provider yields `result`; commit gate (verification hook) passes |
-| `working` | `failed` | provider yields `fail`, crashes, or a lease expires |
-| `working` | `canceled` | cooperative cancel acknowledged |
+| `working` | `budget-exceeded` | settlement at outcome exceeds what was reserved and no grant in the chain can absorb the difference (A2) |
+| `working` | `completed` | provider returns an outcome; commit gate (verification hook) passes; staged proposals are promoted, `grant.settled` + `grant.released` commit in the same record |
+| `working` | `failed` | provider fails or crashes, a lease expires with a *known* non-landing, or the commit gate rejects; the whole reservation is released |
+| `working` | `uncertain` | dispatch is journaled but no outcome is; the effect's class makes silent re-execution unsafe (`external-compensatable`, `external-irreversible`) |
+| `working` | `canceled` | cooperative cancel acknowledged (the *request* was journaled when it was made, whether or not it is honored — amendment A10) |
+| `uncertain` | `completed` | disposition `probe` returning `landed`, or `adopt-landed` with a named authority |
+| `uncertain` | `failed` | disposition `probe` returning `not-landed`, `compensate` succeeding, or `abandon-failed` with a named authority |
+| `uncertain` | `uncertain` | disposition `probe` returning `unknown`, or a failed compensation — the state persists rather than resolving falsely |
 | `input-required` | `working` | `resume(payload)` validating against the sealed `resumeSchema` |
 | `input-required` | `canceled` / `failed` | cancel / deadline-escalation exhausted |
 | `auth-required` | `working` | `resume` carrying authorization evidence |
@@ -706,7 +836,9 @@ stateDiagram-v2
 | any terminal | — | none; terminal tasks are immutable (A2A precedent, FACT, research/notes/a2a-protocol.md F4) |
 
 Semantics: `rejected` means a principal (provider, policy, approver) *declined* the work;
-`failed` means the work was attempted and did not succeed. Note the asymmetry in the table:
+`failed` means the work was attempted and did not succeed; `uncertain` means the work was
+attempted and **nobody knows**. The third case is the one every surveyed system elides into the
+second, which is how double-charged customers happen. Note the asymmetry in the table:
 `submitted → failed` is deliberately unrepresentable in V0 (infrastructure failure at
 dispatch surfaces as a bind/kernel error, not a lifecycle transition) — flagged for
 adversarial review.
@@ -716,10 +848,29 @@ adversarial review.
 Invocations are async-first: `invoke()` returns an Invocation handle immediately; awaiting
 terminal state is a caller convenience. This inverts A2A's blocking-by-default
 `SendMessage` (FACT + INFERENCE/MEDIUM that blocking-default is a DX concession a substrate
-should invert — research/notes/a2a-protocol.md F3, Implication 1). Every Invocation carries
-an `idempotencyKey` (dedup window enforced by the kernel), `correlationId`, `causationId`,
-and a Grant reference; at-least-once delivery + keyed dedup produces the exactly-once
-illusion (spine §7). State is authoritative; progress events are advisory (§6.7).
+should invert — research/notes/a2a-protocol.md F3, Implication 1). Every Invocation carries a
+**content-inclusive effect key** (capability + step + argument hash — amendment A1: the same
+step with different arguments is a different effect, and effect identity is scoped to the
+lineage), `correlationId`, `causationId`, and a non-resolvable grant reference (§5.7).
+
+**Two caches, two contracts (amendment A11).** At-least-once delivery plus keyed suppression
+produces the exactly-once illusion (spine §7) — but the mechanism that does it is *not* the
+mechanism that makes delta execution cheap, and conflating them was a prototype cheat rather
+than a design:
+
+| | Reliability dedup window | Replay cache |
+|---|---|---|
+| Purpose | Suppress duplicate *delivery* of the same effect | Reuse a prior *result* for identical work |
+| Key | Effect key, scoped to the lineage | Content key (inputs + definition hash) |
+| Lifetime | Bounded; TTL MUST be ≥ the retry horizon | Indefinite, policy-governed |
+| Contract class | Correctness (a violation double-applies an effect) | Optimization (a miss costs money, not correctness) |
+| On miss | Re-execute under the effect-class rules | Execute normally |
+| Journaled as | `effect.deduplicated` / `delivery.duplicate` — suppression always leaves evidence | Ordinary invocation events |
+
+A suppressed duplicate is journaled, never silent: the kernel records that a duplicate arrived,
+which invocation it matched, and what that invocation's outcome was (invariant I14). "Nothing
+happened" and "something happened twice and we absorbed it" must be distinguishable after the
+fact. State is authoritative; progress events are advisory (§6.7).
 
 ### 6.4 Typed suspensions
 
@@ -732,9 +883,18 @@ framework survey — FACT (research/notes/agent-frameworks-crewai-pydantic-llama
 suspension record; consumers MUST echo it back unmodified and MUST NOT inspect it —
 integrity-protected continuation tokens per MCP MRTR's `requestState` discipline (FACT +
 INFERENCE/HIGH: suspensions as sealed continuations beat live callbacks for durable
-execution — research/notes/mcp-protocol.md §7, Implication 3). Budget exhaustion is the one
-suspension only the kernel may raise: providers cannot observe Grants (`SuspendReason`
-excludes `budget-exceeded`; SOURCE-CODE OBSERVATION, `prototypes/kernel/types.ts`).
+execution — research/notes/mcp-protocol.md §7, Implication 3).
+
+**Every suspension record carries an `origin` discriminator (normative; amendment A10):**
+
+| `origin` | Raised by | Resume semantics |
+|---|---|---|
+| `provider` | The capability, returning `suspend(reason, payload)` | The kernel re-invokes the provider with `ctx.resume` populated. Because no continuation is preserved across the boundary, a `resumable` capability MUST be able to reconstruct its position from the suspension payload alone (§2.7). |
+| `policy` | A policy stage, at bind or at an effectful commit point | The stage that suspended is re-evaluated with the supplied decision (e.g. an approver's verdict, journaled with the approver's identity); the provider is only re-entered if the stage now allows. |
+| `kernel` | The kernel itself — budget exhaustion is the sole V1 case | Resolvable only by re-grant or attenuated retry. Providers cannot observe Grants and cannot raise this reason (`SuspendReason` excludes `budget-exceeded`). |
+
+Conflating the three was a real defect source: resuming a policy suspension by re-invoking the
+provider skips the stage that stopped it, which is a policy bypass wearing a recovery costume.
 
 ### 6.5 Invocation shapes
 

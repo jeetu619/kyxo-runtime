@@ -339,6 +339,30 @@ Normative rules:
   `dedupTTL ≥ maxRetryHorizon`; the replay cache is content-keyed and policy-governed.
   Only the window belongs in the checkpoint.
 
+## 9a. Grants: ceilings, not reservations
+
+A grant's limits are **ceilings enforced along the whole chain at admission**, not
+partitioned reservations. Two consequences that MUST be understood by anyone reading a
+grant:
+
+- Sibling grants MAY overcommit: a parent holding 5 invocations may mint ten children
+  each declaring 4. Attenuation validates each child against the parent independently.
+- Actual spend is nevertheless bounded by every ancestor: admission checks remaining
+  budget for each grant in the chain, so the ten siblings above collectively admit
+  exactly 5 invocations and the rest are denied with a journaled `grant.denied`.
+
+In other words, a grant's limit is *the most this child may ever spend*, not *this much
+is set aside for it*. This is thin provisioning, chosen because AI workloads cannot
+predict how spend distributes across delegated branches; hard partitioning would strand
+budget in branches that never run. An implementation MAY offer a partitioned mode, but
+the default and the guarantee specified here are as above. Verified by
+`grants.test.ts`, "sibling grants may overcommit limits, but chain spend is still
+bounded".
+
+Reservation and settlement (amendment A2) apply to *invocations in flight*: admission
+reserves, outcome settles or releases. Reservation is durable before dispatch so a crash
+cannot lose a hold.
+
 ## 10. Lineage and provenance
 
 - Every committed event carries `executionId` and `correlationId`; causally-derived
