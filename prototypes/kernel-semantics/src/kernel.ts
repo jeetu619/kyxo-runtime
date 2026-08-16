@@ -548,7 +548,7 @@ export class Kernel {
     // Cancellation observed during execution.
     if (exec.cancelRequested.has(invocationId)) {
       this.commit(exec, [
-        { kind: 'invocation.canceled', actorId: 'kernel', invocationId, grantId, payload: { effectKey, landedExternal } },
+        { kind: 'invocation.canceled', actorId: 'kernel', invocationId, grantId, payload: { effectKey, effectClass, landedExternal } },
         { kind: 'grant.released', actorId: 'kernel', invocationId, grantId, payload: { units: { invocations: 1 } } },
       ]);
       exec.effectIndex.set(effectKey, { invocationId, effectClass, landed: landedExternal, outcome: 'failed' });
@@ -575,7 +575,7 @@ export class Kernel {
       if (d.decision === 'deny') {
         this.commit(exec, [
           { kind: 'policy.denied', actorId: 'kernel', invocationId, grantId, payload: { stage: stage.name, reason: d.reason, phase: 'commit' } },
-          { kind: 'invocation.failed', actorId: 'kernel', invocationId, grantId, payload: { error: `policy: ${d.reason}` } },
+          { kind: 'invocation.failed', actorId: 'kernel', invocationId, grantId, payload: { error: `policy: ${d.reason}`, effectKey, effectClass, landedExternal } },
           { kind: 'grant.released', actorId: 'kernel', invocationId, grantId, payload: { units: { invocations: 1 } } },
         ]);
         exec.effectIndex.set(effectKey, { invocationId, effectClass, landed: landedExternal, outcome: 'failed' });
@@ -597,7 +597,7 @@ export class Kernel {
           payload: { verdict: e.verdict, detail: e.detail },
         }));
         drafts.push(
-          { kind: 'invocation.failed', actorId: 'kernel', invocationId, grantId, payload: { error: 'verification-failed', evidenceCount: evidence.length } },
+          { kind: 'invocation.failed', actorId: 'kernel', invocationId, grantId, payload: { error: 'verification-failed', evidenceCount: evidence.length, effectKey, effectClass, landedExternal } },
           { kind: 'grant.released', actorId: 'kernel', invocationId, grantId, payload: { units: { invocations: 1 } } },
         );
         this.commit(exec, drafts);
@@ -649,7 +649,7 @@ export class Kernel {
 
     usage['invocations'] = 1;
     drafts.push(
-      { kind: 'invocation.completed', actorId: 'kernel', invocationId, grantId, payload: { effectKey, output: result.output, landedExternal } },
+      { kind: 'invocation.completed', actorId: 'kernel', invocationId, grantId, payload: { effectKey, effectClass, output: result.output, landedExternal } },
       { kind: 'grant.settled', actorId: 'kernel', invocationId, grantId, payload: { units: usage } },
     );
     this.commit(exec, drafts);
@@ -668,7 +668,7 @@ export class Kernel {
     landedExternal = false,
   ): InvokeOutcome {
     this.commit(exec, [
-      { kind: 'invocation.failed', actorId: 'kernel', invocationId, grantId, payload: { error, effectKey, landedExternal } },
+      { kind: 'invocation.failed', actorId: 'kernel', invocationId, grantId, payload: { error, effectKey, effectClass, landedExternal } },
       { kind: 'grant.released', actorId: 'kernel', invocationId, grantId, payload: { units: { invocations: 1 } } },
     ]);
     exec.effectIndex.set(effectKey, { invocationId, effectClass, landed: landedExternal, outcome: 'failed' });
@@ -943,6 +943,23 @@ export class Kernel {
       if (current?.revoked === true) child.grants.set(gid, { ...g, revoked: true });
     }
 
+    // The child's journal MUST be self-sufficient. Materializing the inherited state
+    // into the child's own first commit is what makes that true: recovery rebuilds the
+    // fork from its own records, with no dependency on a checkpoint blob that could be
+    // absent, garbage-collected, or silently divergent.
+    //
+    // (Falsified by adversarial review #2: recovery rebuilt each execution from its own
+    // journal only, so a restart erased everything a fork inherited — including the
+    // protected-effect set — and an irreversible effect re-executed with zero invariant
+    // violations reported. See docs/20 F-8.)
+    const inheritedEffects = [...effectIndex.entries()].map(([k, v]) => [k, v] as const);
+    const inheritedDigest = sha({
+      snapshot: cp.stateSnapshot,
+      protectedEffects: [...protectedEffects].sort(),
+      effects: inheritedEffects.map(([k, v]) => [k, v.outcome, v.effectClass, v.landed]).sort(),
+      grants: [...child.grants.values()].map((g) => [g.id, g.revoked, g.limits, g.rights]),
+    });
+
     this.commit(child, [
       {
         kind: 'execution.forked',
@@ -954,6 +971,24 @@ export class Kernel {
           dispositions: opts.dispositions,
           definitionHash: child.definitionHash,
           replayOverride: opts.allowReplayOfProtected ?? null,
+          correlationId: child.correlationId,
+          // The snapshot is content-addressed, so naming it in the journal attests it.
+          snapshotRef: cp.stateSnapshot,
+          inheritedDigest,
+        },
+      },
+      {
+        kind: 'grant.inherited',
+        actorId: 'kernel',
+        payload: { grants: [...child.grants.values()] },
+      },
+      {
+        kind: 'effects.inherited',
+        actorId: 'kernel',
+        payload: {
+          effects: inheritedEffects,
+          protectedEffects: [...protectedEffects],
+          dedupWindow: [...child.dedupWindow],
         },
       },
     ]);
@@ -1080,6 +1115,34 @@ export class Kernel {
       case 'grant.revoked': {
         const g = exec.grants.get(ev.grantId!);
         if (g !== undefined) exec.grants.set(g.id, { ...g, revoked: true });
+        break;
+      }
+      case 'execution.forked': {
+        // Rehydrate the inherited cell/artifact state from the attested snapshot.
+        exec.parent = {
+          executionId: p['parentExecution'] as ExecutionId,
+          checkpointId: p['checkpointId'] as CheckpointId,
+          cutSeq: p['cutSeq'] as number,
+        };
+        exec.definitionHash = (p['definitionHash'] as string) ?? exec.definitionHash;
+        const ref = p['snapshotRef'] as string | undefined;
+        if (ref !== undefined && this.storage.hasBlob(ref)) {
+          const snap = this.storage.getBlob(ref) as { cell: [string, unknown][]; artifacts: ArtifactRef[] };
+          for (const [key, value] of snap.cell) exec.cell.set(key, value);
+          exec.artifacts.push(...snap.artifacts);
+        }
+        break;
+      }
+      case 'grant.inherited': {
+        for (const g of (p['grants'] as GrantState[] | undefined) ?? []) exec.grants.set(g.id, g);
+        break;
+      }
+      case 'effects.inherited': {
+        for (const [key, entry] of (p['effects'] as [EffectKey, EffectIndexEntry][] | undefined) ?? []) {
+          exec.effectIndex.set(key, entry);
+        }
+        for (const key of (p['protectedEffects'] as EffectKey[] | undefined) ?? []) exec.protectedEffects.add(key);
+        for (const key of (p['dedupWindow'] as EffectKey[] | undefined) ?? []) exec.dedupWindow.add(key);
         break;
       }
       default:

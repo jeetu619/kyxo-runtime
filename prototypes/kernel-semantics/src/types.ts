@@ -154,6 +154,10 @@ export interface CapabilityProvider {
 export type EventKind =
   | 'execution.created'
   | 'execution.forked'
+  /** Inherited authority materialized into the child's own journal (see docs/20 F-8). */
+  | 'grant.inherited'
+  /** Inherited effect identity and protected effects, likewise materialized. */
+  | 'effects.inherited'
   | 'invocation.admitted'
   | 'invocation.dispatched'
   | 'invocation.completed'

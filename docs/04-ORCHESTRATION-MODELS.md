@@ -1,9 +1,17 @@
 # 04 — Orchestration Models: Eleven Paradigms, One Kernel
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A9(i). Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document was drafted before the adversarial
+> review; the review's binding adjudications live in the Amendment log of
+> `research/DESIGN-SPINE.md` (A1–A14), with the full findings in `research/ADVERSARIAL-REVIEW.md`.
+> They are now reflected in the body.
+> **Applied here:** A9(i) (graph-absence rescoped to the seven source-inspected agents +
+> Copilot-by-platform-docs + Windsurf `n/e`, and the "all eight run the loop" overcount
+> corrected — §2.A, §4.1 fact 4 and its diagram), A2 (reserve-at-lease / settle-at-outcome /
+> release-remainder replaces decrement-at-commit — §4.2 requirement 7, §4.4), A10 (suspension
+> `origin` discriminator on `budget-exceeded` — §4.4). §4.4 also records that grant limits are
+> chain-enforced **ceilings**, not partitions, per `17-KERNEL-SEMANTICS.md` §9a.
+> **Outstanding:** none. Where this document conflicts with the Amendment log, **the amendment
+> log governs**.
 
 
 Status: derived from `research/DESIGN-SPINE.md` (pre-adversarial-review). This document is the
@@ -86,9 +94,19 @@ flowchart TB
 invocation → decode emitted actions → execute tool invocations → append results → repeat
 until a termination policy fires. The model is the planner; the loop is a thin dispatcher.
 
-**Production evidence.** The dominant paradigm by deployment mass. All eight competitive
-coding agents run it, and zero contain a graph engine (SOURCE-CODE OBSERVATION/HIGH,
-research/notes/coding-agents-landscape.md). Claude Code reduces to model call + tool call +
+**Production evidence.** The dominant paradigm by deployment mass. Six of the eight surveyed
+coding agents run the canonical streaming native-tool-call loop; Gemini CLI runs the same loop
+behind an explicit per-tool-call scheduler state machine; the two outliers are Aider (a
+bounded-reflection rewrite pipeline, deliberately not an agent loop) and the Copilot cloud
+agent (an artifact-mediated remote pipeline) — the four-loop-model taxonomy of
+`02-ECOSYSTEM-RESEARCH.md` §2.4 (research/notes/coding-agents-landscape.md). Graph engines are
+absent across the inspected set, scoped per amendment A9(i): zero of the **seven
+source-inspected** agents contain one (SOURCE-CODE OBSERVATION/HIGH); the Copilot cloud agent
+shows none in its documented pipeline (FACT, platform docs); Windsurf/Cascade is press-level
+only and not evidenced either way (`n/e`, `03-HARNESS-COMPARISON.md` §2.2). *(The earlier
+"all eight run it, and zero contain a graph engine — SCO/HIGH" overstated both halves: it
+counted four distinct loop models as one, and asserted source verification for two systems
+where none exists.)* Claude Code reduces to model call + tool call +
 vetoable event + append-only transcript (research/notes/anthropic-claude-code-agent-sdk.md).
 MAF's function-calling loop plus `AgentLoopMiddleware`, ADK's `BaseLlmFlow`, smolagents'
 `_run_stream`, CrewAI's dual-grammar `CrewAgentExecutor`, and LangGraph's
@@ -580,10 +598,10 @@ flowchart TB
         C3["LLM-driven transfer"] --> AK
         AK["nodes emitting events over a<br/>yield-is-commit runner;<br/>own workflow-agents deprecated"]
     end
-    subgraph cc ["Coding agents ×8 (coding-agents-landscape.md)"]
+    subgraph cc ["Coding agents: 7 source-inspected + Copilot by platform docs<br/>(Windsurf n/e) — coding-agents-landscape.md"]
         D1["plan mode = policy profile"] --> CK
         D2["subagents = session + policy diff<br/>+ budget + single result"] --> CK
-        CK["model call + tool call + typed event<br/>+ append-only transcript;<br/>zero graph engines"]
+        CK["model call + tool call + typed event<br/>+ append-only transcript;<br/>zero graph engines in the inspected set"]
     end
     LK --> CONV["Convergent shape: a small scheduling/journal substrate;<br/>every orchestration paradigm is a compiled frontend or a library"]
     MK --> CONV
@@ -609,10 +627,15 @@ The five convergence facts, stated sharply:
    events," with `SequentialAgent`/`ParallelAgent`/`LoopAgent` formally deprecated and
    three interchangeable strategy styles (graph, imperative, LLM-driven) over one
    event log (FACT + SCO/HIGH, google-adk.md §1, §4).
-4. **The most commercially successful agents have no graphs at all.** Zero of eight coding
-   agents contain a DAG engine; "plan mode" is uniformly a policy profile over the same
-   loop; orchestration is prompts + delegation + triggers (SCO/HIGH,
-   coding-agents §3, §10).
+4. **The most commercially successful agents have no graphs at all.** Zero of the **seven
+   source-inspected** coding agents contain a DAG engine (SOURCE-CODE OBSERVATION/HIGH); the
+   Copilot cloud agent shows none in its documented pipeline (FACT, platform docs);
+   Windsurf/Cascade is press-only and not evidenced either way (`n/e`, the Graph-support cell
+   in `03-HARNESS-COMPARISON.md` §2.2). Across the inspected set "plan mode" is uniformly a
+   policy profile over the same loop and orchestration is prompts + delegation + triggers
+   (coding-agents §3, §10). Scoped per amendment A9(i). The conclusion is unchanged, and its
+   role is unchanged too: this is *corroboration* for convergences 1–3, which are four
+   independent source-verified arrivals and carry the adjudication on their own.
 5. **Supervisor-as-topology lost to subagents-as-tools** in the one ecosystem that shipped
    both and could measure adoption: LangGraph's supervisor/swarm packages are unmaintained,
    the migration doc points at subagents; CrewAI demoted crews under flows; five coding
@@ -676,7 +699,9 @@ visibly lack. Seven requirements, each traceable to evidence:
    becomes safe on top of it.
 7. **Budget and lineage on grants.** Every spawn carries an attenuated Grant: rights plus
    quantitative budget (tokens, money, wall-clock, invocations, spawn depth/width), forming
-   a lineage tree the kernel decrements at commit. This is the one requirement with *no*
+   a lineage tree the kernel charges against by **reserving at lease and settling at
+   outcome** (amendment A2; the decrement-at-commit model is retired everywhere — see §4.4).
+   This is the one requirement with *no*
    adequate prior art — the state of the art is `max_llm_calls` (one integer), env-var
    caps, and a usage-accounting hole through Temporal's activity boundary
    (google-adk.md §3, anthropic note §11, durable-execution.md §2) — and it is what makes
@@ -725,15 +750,32 @@ Kyxo's control is construction, not convention (OUR PROPOSAL, per spine §3 Gran
   `child.width ≤ parent.width_remaining`, `child.tokens/money/wall-clock ≤ parent's
   unspent balance`, risk class ≤ parent's. The kernel refuses any spawn whose grant would
   exceed the parent's remainder — the seL4 mint-with-subset rule applied to quantitative
-  rights (prior-art §7).
-- **The kernel decrements at commit.** Charges land when an invocation's outcome enters
-  the truth plane, against the grant lineage — so a child's spend is *by construction*
-  visible to every ancestor. This closes the Temporal/PydanticAI accounting hole: usage
-  cannot be lost at a boundary because usage is not carried by user code at all.
+  rights (prior-art §7). A child's limits are a **ceiling enforced along the whole chain at
+  admission, not a partition set aside for it**: siblings are each validated against the
+  parent independently and may therefore overcommit in aggregate, while actual spend stays
+  bounded because admission re-checks every ancestor's remaining budget
+  (`17-KERNEL-SEMANTICS.md` §9a — thin provisioning, chosen because AI workloads cannot
+  predict how spend distributes across delegated branches).
+- **The kernel reserves at lease and settles at outcome** (amendment A2). Admission reserves
+  the requested amount against the remaining budget of *every* grant in the chain, and the
+  reservation is durable **before** dispatch so a crash cannot lose a hold; at outcome the
+  kernel settles the actual amount and releases the unused remainder, as three distinct
+  journal event kinds (`grant.reserved`, `grant.settled`, `grant.released`). Exhaustion is
+  therefore detectable *before* spend. *(Superseded: this bullet previously read "the kernel
+  decrements at commit". Retained as history because the analysis that forced the change is
+  instructive — charging only at commit leaves a check-then-spend window in which two
+  concurrent admissions both pass against the same remaining balance, and a crash between
+  dispatch and commit loses the hold entirely. Federation's reserve/reconcile is the same
+  mechanism with lagged settlement, not an exception.)* Charges land against the grant
+  lineage, so a child's spend is *by construction* visible to every ancestor. This closes the
+  Temporal/PydanticAI accounting hole: usage cannot be lost at a boundary because usage is not
+  carried by user code at all.
 - **Exhaustion is a typed suspension, not a crash.** `budget-exceeded` is an interrupted
   state in the invocation algebra, escalating to the parent cell (or a human capability)
-  with a typed payload — the observed Claude Code contract (refuse-spawn, stop background
-  children, typed error result) promoted from product behavior to kernel semantics.
+  with a typed payload carrying `origin: kernel` (amendment A10 — suspension records carry a
+  provider | policy | kernel discriminator, and the three have different resume semantics).
+  This promotes the observed Claude Code contract (refuse-spawn, stop background children,
+  typed error result) from product behavior to kernel semantics.
 - **Restart intensity extends to cost.** OTP's MaxR/MaxT restart budgets, extended to
   token/dollar intensity: a subtree that keeps failing exhausts its restart budget and
   escalates rather than retrying forever (durable-execution.md §6, spine §7).
@@ -812,3 +854,24 @@ The costs are real; the counter-position is unoccupied; the trade is taken with 
   and benchmarked): `06-CAPABILITY-SPEC.md`.
 - Per-system evidence behind every profile in §2: `02-ECOSYSTEM-RESEARCH.md` and
   `03-HARNESS-COMPARISON.md`.
+- Normative kernel semantics for everything §4.2/§4.4 assumes (commit barrier, grants as
+  ceilings, reserve/settle, fork dispositions): `17-KERNEL-SEMANTICS.md`,
+  `18-KERNEL-INVARIANTS.md`, and the executable model in `prototypes/kernel-semantics/`.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendment reconciliation against `research/DESIGN-SPINE.md` A1–A14 and the executable
+semantics in `prototypes/kernel-semantics/src/kernel.ts`. Edits were surgical; the eleven
+paradigm profiles and the H1 adjudication are unchanged. Superseded mechanism statements were
+corrected in place with the analysis that forced each change retained and marked.
+
+| Amendment | Change |
+|---|---|
+| **A9(i)** | §2.A *Production evidence*: "All eight competitive coding agents run it, and zero contain a graph engine (SCO/HIGH)" replaced — the loop claim is now six-of-eight canonical plus Gemini CLI's scheduler variant, with Aider and Copilot cloud named as the two non-loop outliers (matching doc 02 §2.4's four-loop taxonomy, which this document previously contradicted); the graph claim is now the scoped triple — seven source-inspected (SCO/HIGH), Copilot cloud by documented pipeline (FACT), Windsurf `n/e`. §4.1 convergence fact 4 rescoped identically and re-labelled as corroboration for facts 1–3 rather than load-bearing evidence. The §4.1 mermaid diagram's "Coding agents ×8 … zero graph engines" subgraph relabelled to the inspected set. Docs 02 §2.4/§3.1 and 03 §2.2/B1 now state the identical triple. |
+| **A2** | §4.2 requirement 7: "a lineage tree the kernel decrements at commit" → reserve-at-lease / settle-at-outcome. §4.4 bullet 2 rewritten: admission reserves against every ancestor's remaining budget with the reservation durable **before** dispatch; outcome settles and releases the remainder; three distinct event kinds (`grant.reserved`, `grant.settled`, `grant.released`); federation's reserve/reconcile named as the same mechanism with lagged settlement. The retired decrement-at-commit wording is quoted with the reason it failed (check-then-spend window; hold lost on a crash between dispatch and commit). |
+| **A10** | §4.4 bullet 3: `budget-exceeded` suspensions carry `origin: kernel`, per the provider / policy / kernel discriminator with distinct resume semantics. |
+| **Consistency (doc 17 §9a)** | §4.4 bullet 1: added that grant limits are **ceilings enforced along the whole chain at admission**, not partitions — siblings are validated independently and may overcommit in aggregate while spend stays chain-bounded. Guards against reading §2.I's "clean budget partitioning per worker" (a description of the supervisor *paradigm's* affordance) as a statement of Kyxo kernel semantics. |
+| **A9(ii)** | No occurrence — the Realtime/Live lowering claim is not made in this document. |
+| **A1, A3–A8, A11–A14** | No occurrence. §4.4's revocation-transitivity and grant-arithmetic text was already consistent with A8 (handles) and A13 (eligibility vs selection); the fork/effect-identity mechanics of A1 are stated in docs 08/17, not here. |

@@ -21,6 +21,13 @@ export interface InvariantContext {
   /** Journal snapshot taken before the operation, for immutability checks. */
   readonly priorJournal?: readonly KernelEvent[] | undefined;
   readonly priorByExecution?: ReadonlyMap<string, readonly KernelEvent[]> | undefined;
+  /**
+   * I25: recover a shadow kernel from durable storage and compare observable state.
+   * O(journal) per call, so callers sample it rather than running it every operation.
+   */
+  readonly deepRecoveryCheck?: boolean | undefined;
+  /** Providers needed to construct the shadow kernel (registration only). */
+  readonly providers?: readonly unknown[] | undefined;
 }
 
 function allEvents(storage: Storage): KernelEvent[] {
@@ -232,6 +239,38 @@ export function checkInvariants(ctx: InvariantContext): Violation[] {
   // ---- I16: no staged candidate survives as committed ----
   if (kernel.stagedCount() > 0) {
     v.push({ id: 'I16', detail: `${kernel.stagedCount()} staged proposal set(s) leaked past settlement` });
+  }
+
+  // ---- I25: the journal is self-sufficient — live state == recovered state ----
+  // This is the invariant that would have caught F-6 and F-8. Any state a kernel holds
+  // that cannot be rebuilt from durable records is a protection that lasts until the
+  // next restart.
+  if (ctx.deepRecoveryCheck === true) {
+    const shadow = Kernel.recover(storage, (ctx.providers ?? []) as never);
+    for (const execId of kernel.executionIds()) {
+      const live = kernel.state(execId as never);
+      let recovered;
+      try {
+        recovered = shadow.kernel.state(execId as never);
+      } catch {
+        v.push({ id: 'I25', detail: `${execId}: execution does not survive recovery at all` });
+        continue;
+      }
+      const cmp: [string, unknown, unknown][] = [
+        ['cell', [...live.cell.entries()].sort(), [...recovered.cell.entries()].sort()],
+        ['protectedEffects', [...live.protectedEffects].sort(), [...recovered.protectedEffects].sort()],
+        ['effectIndex', [...live.effectIndex.keys()].sort(), [...recovered.effectIndex.keys()].sort()],
+        ['grants', [...live.grants.keys()].sort(), [...recovered.grants.keys()].sort()],
+      ];
+      for (const [name, a, b] of cmp) {
+        if (JSON.stringify(a) !== JSON.stringify(b)) {
+          v.push({
+            id: 'I25',
+            detail: `${execId}: ${name} not reconstructable from the journal (live=${JSON.stringify(a).slice(0, 120)} recovered=${JSON.stringify(b).slice(0, 120)})`,
+          });
+        }
+      }
+    }
   }
 
   // ---- I9: checkpoints reference a valid committed boundary ----

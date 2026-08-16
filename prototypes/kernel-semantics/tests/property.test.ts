@@ -172,7 +172,17 @@ async function runSequence(seed: number, ops: Op[]): Promise<string | null> {
   for (let i = 0; i < ops.length; i += 1) {
     const prior = snapshotByExecution(w.storage);
     await apply(w, ops[i]!, r);
-    const violations = checkInvariants({ kernel: w.kernel, storage: w.storage, priorByExecution: prior });
+    // I25 (journal self-sufficiency) is O(journal), so it is sampled rather than run
+    // every operation — but it must run often enough to catch a fork or recovery path
+    // that stops being reconstructable (docs/20 F-8).
+    const deep = i % 7 === 0;
+    const violations = checkInvariants({
+      kernel: w.kernel,
+      storage: w.storage,
+      priorByExecution: prior,
+      deepRecoveryCheck: deep,
+      providers: deep ? [...ALL_CAPABILITIES, w.pay] : undefined,
+    });
     if (violations.length > 0) {
       return `op#${i} (${ops[i]!.op}): ` + violations.map((x) => `[${x.id}] ${x.detail}`).join('; ');
     }

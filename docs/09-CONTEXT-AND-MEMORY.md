@@ -1,9 +1,15 @@
 # 09 — Context and Memory
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** none. **Adopted but not yet reflected in this document's body:** vocabulary: memory cell vs kernel Cell. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Post-review status (2026-08-16, phase 2).** This document was drafted before the adversarial
+> review; the review's binding adjudications live in the Amendment log of
+> `research/DESIGN-SPINE.md` (A1–A14), with the full findings in `research/ADVERSARIAL-REVIEW.md`.
+> They are now reflected in the body.
+> **Applied here:** the **memory cell vs kernel Cell** vocabulary collision — ruled once in the
+> naming ruling below and applied throughout Parts A and B (memory cells are Kind records held
+> in a single-writer store Cell; open issue 1 is closed); A2 (reserve-at-lease /
+> settle-at-outcome replaces decrement-at-commit in the token-budget contract, §A.4).
+> **Outstanding:** none. Where this document conflicts with the Amendment log, **the amendment
+> log governs**.
 
 
 Status: DECIDED (pre-adversarial-review). Derived from `research/DESIGN-SPINE.md` §5; claim
@@ -18,6 +24,25 @@ system** is the deterministic *context compiler*; the **memory system** is durab
 state; a **harness** configures the compiler but does not own the mechanism; a model call is
 an **Invocation** of a model-adapter **Binding**; the append-only truth plane is the
 **journal** of **Events**; payloads live in **Artifacts**.
+
+> **Naming ruling: "memory cell" is not the kernel Cell.** The draft of this document used
+> the bare word *cell* for both, which was the one genuine vocabulary collision the review
+> found in it. Resolved here, once, and used consistently below:
+>
+> - A **memory cell** (always lowercase, always both words) is a **Kind record** of
+>   `memory.block/v1` — a labeled, quota'd, versioned unit of durable memory (B.1). It is
+>   userland data with a registered schema. Memory cells are *stored*, not *executed*.
+> - A **Cell** (capitalized, the kernel object of spine §3.6) is a keyed, single-writer,
+>   activation-on-demand **execution scope**. Sessions, harness runs and the memory store
+>   itself run in Cells.
+> - The relationship: **memory cells are Kind records held in a single-writer store Cell.**
+>   The store Cell's single-writer turn is what serializes writes to the records it holds, so
+>   memory inherits the kernel's consistency guarantee without adding a tenth kernel object.
+>
+> Consequently "cell" never appears bare in this document to mean memory. Where the kernel
+> object is meant it is written **kernel Cell**; where the record is meant it is written
+> **memory cell**. Nine tiers, scopes and label vectors are properties of memory cells;
+> grants, checkpoints and single-writer turns are properties of kernel Cells.
 
 ---
 
@@ -52,7 +77,7 @@ Interpretation— When durable state is addressable and context is a pure functi
                 the two (caller-owned message arrays as the only state, which is every
                 OpenAI-dialect framework's default) cannot swap the executor without losing
                 the agent.
-Implication   — Kyxo makes the split structural: memory lives in cells and artifacts
+Implication   — Kyxo makes the split structural: memory lives in memory cells and artifacts
                 (Part B); context is compiled per Invocation by an inspectable pipeline
                 (A.2) and recorded as a derived Artifact. Provider replacement (B.6) is the
                 acceptance test: anything that would be lost when the model or provider is
@@ -111,7 +136,7 @@ context-management system for the whole runtime):
    a per-compile accounting record (the Letta `ContextWindowOverview` precedent) so "what is
    eating the window" is a queryable fact, not archaeology.
 4. **Provenance-preserving.** Every span in the compiled view is labeled: source class,
-   producing capability, cell/artifact version, integrity/confidentiality taint, freshness
+   producing capability, memory-cell/artifact version, integrity/confidentiality taint, freshness
    timestamp. Labels survive *into* the view (MAF attribution and FIDES labels are the
    precedents; spine Artifact labels are the mechanism).
 5. **Visibility-filtering.** Branch and isolation-scope filters run inside the compile
@@ -164,16 +189,16 @@ labels**, and a **budget class** (defined in A.4). The mission's full list, mapp
 | Source class | Content | Provider (capability) | Freshness policy | Budget class | Evidence precedent |
 |---|---|---|---|---|---|
 | **working** | current-task scratch: todos, mode, focus | working-tier memory cells | recomputed every compile | pinned | Letta core blocks pinned in prompt (SCO/HIGH); MAF `TodoProvider`/`AgentModeProvider` (SCO/HIGH) |
-| **conversation** | turn history of this cell | journal fold | exact at journal position | elastic (primary compaction target) | universal; ADK `contents` processor (SCO/HIGH) |
-| **execution** | run status: pending invocations, background children, budget remaining | kernel introspection (scheduler/cell) | per-compile | pinned (small) | background-subagent status surfacing (FACT, anthropic note); MAF `BackgroundAgentsProvider` (SCO/HIGH) |
+| **conversation** | turn history of this kernel Cell | journal fold | exact at journal position | elastic (primary compaction target) | universal; ADK `contents` processor (SCO/HIGH) |
+| **execution** | run status: pending invocations, background children, budget remaining | kernel introspection (scheduler / kernel Cell) | per-compile | pinned (small) | background-subagent status surfacing (FACT, anthropic note); MAF `BackgroundAgentsProvider` (SCO/HIGH) |
 | **task** | Objective, Plan, acceptance criteria | Kind records | event-updated | pinned | Roo plans-as-todo-data (SCO/HIGH, coding-agents note); Plan artifacts (spine §3.9) |
-| **project** | project conventions/instructions | procedural cells scoped `project` | event-invalidated (file-change events) | resident | CLAUDE.md project tier; GEMINI.md/AGENTS.md hierarchies (FACT, both notes) |
-| **org** | org policy, required standards | org-scoped cells / managed config | admin-versioned | resident, non-evictable floor | managed-policy CLAUDE.md tier (FACT); Cursor admin-*required* Team Rules (FACT, cursor.md) |
-| **user** | user preferences, identity-scoped facts | user-scoped cells | as-written; writes approval-gated | resident (small) | Cursor memories with user approval (FACT); ADK `user:` state prefix (SCO/HIGH) |
+| **project** | project conventions/instructions | procedural memory cells scoped `project` | event-invalidated (file-change events) | resident | CLAUDE.md project tier; GEMINI.md/AGENTS.md hierarchies (FACT, both notes) |
+| **org** | org policy, required standards | org-scoped memory cells / managed config | admin-versioned | resident, non-evictable floor | managed-policy CLAUDE.md tier (FACT); Cursor admin-*required* Team Rules (FACT, cursor.md) |
+| **user** | user preferences, identity-scoped facts | user-scoped memory cells | as-written; writes approval-gated | resident (small) | Cursor memories with user approval (FACT); ADK `user:` state prefix (SCO/HIGH) |
 | **repository** | code/workspace structure | retrieval capabilities (B.4) | TTL / index-sync | elastic + on-demand | Aider PageRank map under `--map-tokens` (FACT+SCO/HIGH); Cursor Merkle ~10-min re-sync (FACT, indirect) |
 | **retrieved** | query-driven fetches (RAG, web, docs) | retrieval capabilities | timestamped at fetch | elastic | Continue 4-index + reranker (SCO/HIGH); web tools |
-| **episodic** | prior runs/sessions, summaries | episodic cells + journal search | as-written, decays | on-demand | Letta `conversation_search` over full history (SCO/HIGH); Cursor @Past Chats (FACT) |
-| **semantic** | durable facts/knowledge | semantic cells, archival search | as-written, confidence-decayed | on-demand / elastic | Letta archival memory (FACT/HIGH); Mastra semantic recall (FACT) |
+| **episodic** | prior runs/sessions, summaries | episodic memory cells + journal search | as-written, decays | on-demand | Letta `conversation_search` over full history (SCO/HIGH); Cursor @Past Chats (FACT) |
+| **semantic** | durable facts/knowledge | semantic memory cells, archival search | as-written, confidence-decayed | on-demand / elastic | Letta archival memory (FACT/HIGH); Mastra semantic recall (FACT) |
 | **procedural** | skills, rules, how-tos | skill registry | version-pinned | descriptions: resident metadata; bodies: elastic with re-attachment budget | skills progressive disclosure (FACT); MAF `SkillsProvider` (SCO/HIGH); ADK `SkillToolset` (FACT) |
 | **tool-state** | tool declarations, per-model dialect skins, learned tool preferences | capability manifests via the Binding | bind-time; deferred load | on-demand | deferred MCP schemas via tool search (FACT); Copilot virtual-tool grouping (SCO/HIGH); `EditToolLearningService` (SCO/HIGH) |
 | **environment** | cwd, OS, sandbox profile, environment spec | execution-environment capability introspection | per-compile + event-invalidated (`CwdChanged` etc.) | pinned (small) | Claude Code env events (FACT); Cursor `environment.json` (FACT) |
@@ -202,9 +227,16 @@ them and the accounting record reports them:
 | `transient` | single-invocation lifetime (one tool result, one probe) | never survives |
 
 The per-source budgets are not kernel state; they are compiler-pipeline configuration owned
-by the harness. But the *total* is a Grant: the token budget of the cell's grant bounds the
-sum, and the kernel decrements at commit (spine §3.7). A harness cannot configure its way
-past its grant.
+by the harness. But the *total* is a Grant: the token budget of the kernel Cell's grant bounds
+the sum. Per amendment A2 the kernel **reserves at lease and settles at outcome** — admission
+reserves the projected token spend against every grant in the chain before the model
+invocation is dispatched, and settlement at outcome commit charges the actual usage and
+releases the remainder (`grant.reserved` / `grant.settled` / `grant.released`). *(Superseded:
+this paragraph previously read "the kernel decrements at commit". Retained as history because
+the context compiler is exactly where the old model failed worst — a compile can commit a
+large view whose true token cost is only known after the provider responds, so charging only
+at commit let a compiler configure a view it could not afford.)* A harness still cannot
+configure its way past its grant; it now finds out at admission rather than after the spend.
 
 **Progressive disclosure is the proven economy — the highest-leverage mechanism observed.**
 
@@ -331,7 +363,7 @@ Two interactions worth stating as decisions:
 
 ```mermaid
 sequenceDiagram
-  participant H as Harness (in its cell)
+  participant H as Harness (in its kernel Cell)
   participant K as Kernel (journal + policy pipeline)
   participant X as Compaction executor (bound capability)
   H->>K: context.pressure event (watermark crossed)
@@ -431,13 +463,22 @@ grammar and capability telemetry already guarantee.
 
 ### B.1 Memory cells
 
-A **memory cell** is the unit of durable memory: a labeled, quota'd, versioned record.
-Terminology note, to keep spine §2 clean: a memory cell is *not* the kernel Cell. Memory
-cells are records of a registered Kind (`memory.block/v1` — spine §3.9 lists "Memory block"
-as a canonical Kind); their write path is serialized through a single-writer kernel Cell (the
-memory store's execution scope), which is how the kernel's consistency guarantee applies to
-them without adding a kernel object. Large values live in the CAS and are referenced;
-metadata lives in the record.
+A **memory cell** is the unit of durable memory: a labeled, quota'd, versioned record. Per
+the naming ruling at the head of this document, **memory cells are Kind records held in a
+single-writer store Cell** — and that sentence is the whole of the relationship:
+
+- *What a memory cell is*: a record of the registered Kind `memory.block/v1` (spine §3.9
+  lists "Memory block" as a canonical Kind). Userland data with a schema the kernel
+  validates. Large values live in the CAS and are referenced; metadata lives in the record.
+- *Where it lives*: inside the **memory store's kernel Cell**, whose single-writer turn
+  serializes every write to the records it holds. This is how the kernel's consistency
+  guarantee reaches memory **without adding a tenth kernel object** — the point of the Kind
+  mechanism (spine §3.9).
+- *What it is not*: a kernel Cell. A memory cell has no execution scope, no activation, no
+  grant of its own, and never appears in the kernel's object list. Reading a memory cell is a
+  projection read; writing one is an Invocation of a memory capability (B.3).
+
+The two words are never interchangeable, and the bare word "cell" is not used for either.
 
 Proposed schema (OUR PROPOSAL; evidence anchors noted per field):
 
@@ -451,8 +492,8 @@ Proposed schema (OUR PROPOSAL; evidence anchors noted per field):
 | `integrity`, `confidentiality` | taint labels, persisted (A.6, B.5) | FIDES label vocabulary (SCO/HIGH) |
 | `confidence` | writer-asserted, telemetry-adjustable | OUR PROPOSAL (no direct precedent; spine C3 telemetry analog) |
 | `decay` | review-by / half-life policy reference | OUR PROPOSAL (LOW evidence; see open issues) |
-| `invalidation` | event patterns that stale this cell | file/config-change event classes (FACT, anthropic note) |
-| `contradicts` | links to conflicting cells, unresolved by default | Letta `memory_rethink` as the manual repair verb (SCO/HIGH) |
+| `invalidation` | event patterns that stale this memory cell | file/config-change event classes (FACT, anthropic note) |
+| `contradicts` | links to conflicting memory cells, unresolved by default | Letta `memory_rethink` as the manual repair verb (SCO/HIGH) |
 | `version` | monotonic; every write is a journal Event; history in CAS | Letta Code MemFS "tracked via git" (FACT) |
 
 Honesty about the evidence base: labels, quotas, sharing, versioning, and provenance are all
@@ -466,10 +507,12 @@ change.
 
 Shareability is evidenced and essential: Letta memory blocks are shared between agents with
 consistent real-time views, and the sleep-time architecture depends on it (FACT/HIGH +
-SCO, agent-frameworks note). In Kyxo, sharing is a Grant over the cell's label pattern —
-read, write, or both — attenuable on delegation like everything else.
+SCO, agent-frameworks note). In Kyxo, sharing is a Grant over the memory cell's label
+pattern — read, write, or both — attenuable on delegation like everything else. (The Grant is
+held by the *invoking* kernel Cell; the memory cell is the object the grant names, not a
+holder of authority itself.)
 
-### B.2 Tiers are policy over cells, not kernel types
+### B.2 Tiers are policy over memory cells, not kernel types
 
 The mission names nine tiers: working / episodic / semantic / procedural / artifact / user /
 project / org / execution. The evidence says two things about them. First, every system's
@@ -479,8 +522,8 @@ auto memory (all FACT/SCO across the notes) — tier taxonomies are product opin
 the mission's own list conflates two axes: *content kind* (working, episodic, semantic,
 procedural, artifact, execution) and *sharing scope* (user, project, org) — ADK's state
 prefixes and CLAUDE.md's four-level chain are scope mechanisms, not content mechanisms. We
-therefore split them: cells carry both a `tier` tag and a `scope` tag (B.1), and a **tier is
-a named policy bundle** binding a label pattern to: default quota, default budget class at
+therefore split them: memory cells carry both a `tier` tag and a `scope` tag (B.1), and a
+**tier is a named policy bundle** binding a label pattern to: default quota, default budget class at
 compile, retention class, decay policy, and write-principal rules.
 
 This is also what the spine demands — "Memory tier policy" is on the explicit non-primitives
@@ -488,7 +531,7 @@ list (spine §3), and the ecosystem confirms the demotion: every framework that 
 tier taxonomy is unwinding it (Letta moving memory policy into swappable per-agent-type
 compile functions — noted as the direction in
 research/notes/agent-frameworks-crewai-pydantic-llamaindex-mastra-letta.md, INFERENCE/HIGH
-there). The kernel stores cells and validates schemas; which tiers exist is a profile choice
+there). The kernel stores memory-cell records and validates their schemas; which tiers exist is a profile choice
 (spine §9), and the default profile ships the nine-tier vocabulary above as configuration.
 
 ### B.3 Self-editing memory, and memory management as a reassignable principal
@@ -517,9 +560,9 @@ Implication   — Kyxo ships memory operations as a standard capability profile
                 composes from existing kernel objects: the policy pipeline interposes
                 (Cursor-style approval is an approval-required suspension on the write
                 invocation); budgets charge writes; the journal records every edit with
-                provenance; taint propagates into the cell (B.1). Memory *management* — the
-                consolidating, reorganizing principal — is an agent configuration in its own
-                cell holding a Grant with memory-write rights the primary lacks: the
+                provenance; taint propagates into the memory cell (B.1). Memory *management* —
+                the consolidating, reorganizing principal — is an agent configuration in its
+                own kernel Cell holding a Grant with memory-write rights the primary lacks: the
                 sleep-time pattern falls out of Grant attenuation, requiring no new
                 mechanism, and the assignment is revocable/reassignable at runtime.
 Confidence    — HIGH.
@@ -527,14 +570,14 @@ Confidence    — HIGH.
 
 ```mermaid
 flowchart TB
-  subgraph STORE[Memory store — single-writer kernel Cell]
-    C1[cell: user.prefs scope=user]
-    C2[cell: project.conventions scope=project]
-    C3[cell: episodic.run-2026-08-15 tier=episodic]
+  subgraph STORE["Memory store — ONE single-writer kernel Cell<br/>(serializes every write below)"]
+    C1["memory cell (Kind memory.block/v1)<br/>user.prefs · scope=user"]
+    C2["memory cell (Kind memory.block/v1)<br/>project.conventions · scope=project"]
+    C3["memory cell (Kind memory.block/v1)<br/>episodic.run-2026-08-15 · tier=episodic"]
   end
-  H[Primary harness invocation] -->|read via compile hook| STORE
+  H["Primary harness invocation<br/>(its own kernel Cell)"] -->|read via compile hook| STORE
   H -->|memory.append under Grant G1: write working.* only| STORE
-  S[Sleep-time manager - own cell] -->|memory.rethink / consolidate under Grant G2: write all tiers, no user I/O| STORE
+  S["Sleep-time manager<br/>(its own kernel Cell)"] -->|memory.rethink / consolidate under Grant G2: write all tiers, no user I/O| STORE
   U[Human principal] -->|approval-required suspension on user.* writes| S
   R[Retrieval capability] -->|memory.search read-only| STORE
 ```
@@ -565,8 +608,8 @@ INFERENCE (HIGH): these are interchangeable providers of one capability profile 
 `context.retrieve(query, budget) → labeled spans` — differing in cost structure, freshness
 characteristics, and infrastructure demands, not in contract. Two of the four are themselves
 agents, which is decisive for placement: retrieval cannot be *in* the kernel or even in the
-compiler proper, because a retrieval provider may itself be an orchestrated cell with its own
-grant and budget. The compiler's `repository`/`retrieved`/`episodic`/`semantic` source
+compiler proper, because a retrieval provider may itself be an orchestrated kernel Cell with
+its own grant and budget. The compiler's `repository`/`retrieved`/`episodic`/`semantic` source
 classes are backed by whichever retrieval bindings the harness holds; routing selects among
 them using declared manifests plus outcome telemetry per capability×model pair (spine C3 —
 Cursor's per-model gains and Windsurf's tokens/sec economics are exactly the telemetry a
@@ -576,10 +619,10 @@ repository's integrity).
 
 ### B.5 Privacy and retention: labels drive both
 
-The label vector on cells and artifacts (integrity, confidentiality, scope) is also the
+The label vector on memory cells and artifacts (integrity, confidentiality, scope) is also the
 retention and redaction mechanism — one metadata system, three enforcement uses:
 
-- **Egress control at compile/invocation time.** A cell labeled `confidentiality: PRIVATE`
+- **Egress control at compile/invocation time.** A memory cell labeled `confidentiality: PRIVATE`
   is never compiled into a view bound for a Binding whose target lacks the clearance — the
   FIDES `max_allowed_confidentiality` enforcement generalized from tool calls to model calls
   (SCO/HIGH for the precedent, microsoft note). Secrets go further: Claude Code's credential
@@ -588,7 +631,7 @@ retention and redaction mechanism — one metadata system, three enforcement use
   are *never memory-cell content at all*; they live behind the elicitation form/URL split
   (spine §5) and enter only at protocol edges.
 - **Retention windows per label class.** Retention is a tier-policy field (B.2):
-  episodic cells might default to 90 days, org procedural cells to indefinite,
+  episodic memory cells might default to 90 days, org procedural memory cells to indefinite,
   `transient`-derived caches to days (OpenCode's 7-day snapshot prune is the modest
   ecosystem precedent — SCO/HIGH, coding-agents note). Expiry is a controller acting on the
   Kind's watch stream, journaled like any write.
@@ -617,7 +660,7 @@ Binding is replaced:
 | Artifacts / CAS | **Yes** | content-addressed, provider-agnostic |
 | Compiled views | Regenerable | derived values; recompiled against the new Binding |
 | Provider carry-through artifacts (reasoning items, thinking signatures, thought signatures, echo-required reasoning fields) | **No — by design** | typed opaque artifacts bound to (provider, model, position); dropped with a journal record on swap |
-| Provider session state (Responses `store`/`previous_response_id`, Gemini Interactions, Foundry threads, `cachedContents`) | Only if mirrored | modeled as remote cells with mirrored artifacts/budgets/policy (spine §5); unmirrored provider state is defined as *lost* |
+| Provider session state (Responses `store`/`previous_response_id`, Gemini Interactions, Foundry threads, `cachedContents`) | Only if mirrored | modeled as remote kernel Cells with mirrored artifacts/budgets/policy (spine §5); unmirrored provider state is defined as *lost* |
 | Cache standing (prefix caches, cache resources) | No | economic state, rebuilt; the swap's cost spike is budgeted, not hidden |
 
 The carry-through row is the sharpest, and it is why the category exists at all in the model
@@ -635,8 +678,12 @@ a 400 or a quality cliff.
 
 **Migration walkthrough** (the normative sequence; failure handling per doc 08):
 
-1. **Checkpoint.** Cut the cell: journal position + state snapshot + pending invocations
-   (spine §3.8). Cursor's `&` handoff — migrating a live local thread to a cloud agent by
+1. **Checkpoint.** Cut the kernel Cell: journal position + state snapshot + pending
+   invocations (spine §3.8; the full record shape, including pending effect classes, the
+   protected-effect set and grant states, is `17-KERNEL-SEMANTICS.md` §7). Note this is a cut
+   of the *execution scope*, not of memory: memory cells are durable records that survive the
+   migration untouched, which is why row 1 of the table above reads "Yes" without
+   qualification. Cursor's `&` handoff — migrating a live local thread to a cloud agent by
    state transfer — is the commercial proof this class of migration works (FACT,
    research/notes/cursor.md); Letta's cloud-persisted agent executed by interchangeable
    local harnesses is the architectural proof (FACT, agent-frameworks note).
@@ -659,8 +706,8 @@ a 400 or a quality cliff.
 
 What makes this walkthrough short is the point of the whole document: steps 1–5 contain no
 data migration because Parts A and B put nothing load-bearing where the provider could hold
-it hostage. Everything of the agent that matters is cells, journal, artifacts — and context
-is just the next compile.
+it hostage. Everything of the agent that matters is memory cells, journal, artifacts — and
+context is just the next compile.
 
 ---
 
@@ -668,9 +715,12 @@ is just the next compile.
 
 Carried into the adversarial review; also surfaced in the summary block.
 
-1. **"Memory cell" vs kernel Cell naming.** Resolved locally by convention (memory cells are
-   Kind records serialized through a store Cell); the spine should ratify the terms before
-   sibling docs drift.
+1. ~~**"Memory cell" vs kernel Cell naming.**~~ **CLOSED (2026-08-16, phase 2.)** The
+   collision is resolved once, in the naming ruling at the head of this document, and applied
+   consistently through both parts: **memory cells are Kind records (`memory.block/v1`) held
+   in a single-writer store Cell**; the bare word "cell" is no longer used for either. Every
+   prior ambiguous use has been rewritten to *memory cell* or *kernel Cell*. Sibling documents
+   should adopt the same two terms.
 2. **Confidence/decay/contradiction metadata is proposal-only** (B.1) — no ecosystem
    precedent. Reserved-fields-plus-controllers is the hedge; review should decide whether
    even that belongs in V1 schema.
@@ -687,4 +737,22 @@ Carried into the adversarial review; also surfaced in the summary block.
 6. **Quarantine depends on structured-output tiers.** The quarantined-invocation pattern
    (A.6) is only as strong as the enforcing grammar; on tier-3/4 targets ("json mode"/none)
    the guarantee degrades. Negotiation must be able to express "minimum tier for quarantine
-   duty" — check this is representable in doc 06's axis grammar.
+   duty" — check this is representable in doc 06's axis grammar. (Amendment A10 helps: tiered
+   axes now carry their ordered ladder in manifest data, so "minimum tier" is expressible
+   without the kernel knowing what the tiers mean.)
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendment reconciliation against `research/DESIGN-SPINE.md` A1–A14 and the executable
+semantics in `prototypes/kernel-semantics/src/`. Edits were surgical: a vocabulary decision
+was made once and propagated, and one superseded mechanism statement was corrected in place
+with the analysis that forced it retained.
+
+| Amendment | Change |
+|---|---|
+| **Vocabulary: memory cell vs kernel Cell** | Ruled once in a new **Naming ruling** block after the vocabulary paragraph: a **memory cell** is a Kind record of `memory.block/v1`; a **Cell** is the kernel's keyed single-writer execution scope; **memory cells are Kind records held in a single-writer store Cell**; the bare word "cell" is used for neither. Applied throughout — §A.1 implication, §A.2 provenance contract 4, §A.3 source-class table (conversation, execution, project, org, user, episodic, semantic rows), §A.4 total-budget paragraph, §A.5 sequence-diagram participant, §B.1 (rewritten as three bullets: what a memory cell is, where it lives, what it is not — including that a memory cell has no execution scope, activation or grant of its own), §B.1 schema rows `invalidation`/`contradicts`, §B.1 sharing paragraph (the Grant is held by the invoking kernel Cell, not by the record), §B.2 heading and body, §B.3 implication and its mermaid diagram (store Cell relabelled "ONE single-writer kernel Cell", records relabelled as Kind instances, both principals shown in their own kernel Cells), §B.4, §B.5, §B.6 table and migration step 1, and the closing paragraph. Open issue 1 is **closed**. |
+| **A2** | §A.4: "the *total* is a Grant … and the kernel decrements at commit" replaced by reserve-at-lease / settle-at-outcome / release-remainder with the three event kinds; the retired wording is quoted with why it failed in this subsystem specifically (a compile's true token cost is known only after the provider responds, so commit-time charging let a compiler configure a view it could not afford). §B.6 migration step 1 now cross-references the normative checkpoint record shape in `17-KERNEL-SEMANTICS.md` §7. |
+| **A10** | Open issue 6: noted that tiered axes carrying their ordered ladder in manifest data is what makes "minimum structured-output tier for quarantine duty" expressible without the kernel knowing axis semantics. §A.4's `budget-exceeded` mapping for compaction thrashing is unchanged and is a kernel-origin suspension. |
+| **A1, A3–A9, A11–A14** | No occurrence. This document specifies the context compiler and the memory system; the fork/effect-identity, guarantee-grade, facade, governance, EXTEND, roster, handle and catalog amendments touch neither. A12's allow-path journaling knob is consumed here only indirectly, via the policy pipeline referenced in §A.6. |

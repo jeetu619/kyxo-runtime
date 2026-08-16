@@ -160,6 +160,44 @@ test('irreversible-effect protection survives a process restart (regression: doc
   assertInvariants({ kernel: rec.kernel, storage }, 'post-restart fork protection');
 });
 
+test('a forked lineage survives a restart from its OWN journal (regression: docs/20 F-8)', async () => {
+  const { k, storage, pay } = setup();
+  const a = k.createExecution();
+  const g = k.issueGrant(a, { rights: ['pay', 'write'], limits: { invocations: 30, spawnDepth: 1 } });
+  await k.invoke(a, 'mcp.files', { path: 'inherited', content: 'v1' }, g, { step: 'w' });
+  await k.invoke(a, 'payment.charge', { amount: 777 }, g, { step: 'charge' });
+  const cp = k.checkpoint(a);
+  const b = k.fork(cp.id, { dispositions: {} });
+
+  assert.equal(k.state(b).cell.size, 1);
+  assert.equal(k.state(b).protectedEffects.size, 1);
+
+  // Restart: the child must rebuild from its own records, not from a live checkpoint.
+  const rec = Kernel.recover(storage, [...ALL_CAPABILITIES, pay]);
+  const child = rec.kernel.state(b);
+  assert.equal(child.cell.size, 1, 'inherited cell state must survive recovery');
+  assert.equal(child.protectedEffects.size, 1, 'inherited protection must survive recovery');
+  assert.ok(child.grants.size >= 1, 'inherited authority must survive recovery');
+
+  // And the protection must still bite.
+  const gb = rec.kernel.issueGrant(b, { rights: ['pay'], limits: { invocations: 10, spawnDepth: 1 } });
+  await assert.rejects(
+    () => rec.kernel.invoke(b, 'payment.charge', { amount: 777 }, gb, { step: 'charge' }),
+    (e: unknown) => e instanceof ForkError,
+    'a restarted fork must still refuse to replay the inherited irreversible effect',
+  );
+  assert.equal(pay.world.size, 1, 'exactly one charge in the world');
+
+  // I25: everything the CURRENT writer holds is reconstructable from durable records.
+  // (The check is only meaningful against the sole writer for this storage: two live
+  // kernels sharing one journal is not a supported configuration — there is no journal
+  // locking, and the stale one would legitimately differ.)
+  assertInvariants(
+    { kernel: rec.kernel, storage, deepRecoveryCheck: true, providers: [...ALL_CAPABILITIES, pay] },
+    'fork lineage self-sufficiency',
+  );
+});
+
 test('multiple forks from one checkpoint are independent; forks nest', async () => {
   const { k, storage } = setup();
   const a = k.createExecution();
