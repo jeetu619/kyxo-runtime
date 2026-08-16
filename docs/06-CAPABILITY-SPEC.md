@@ -1,8 +1,9 @@
 # 06 — Capability Specification
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Post-review status (2026-08-16, phase 2).** This document was drafted before the adversarial
+> review; the review's binding adjudications live in the Amendment log of
+> `research/DESIGN-SPINE.md` (A1–A14), with the full findings in `research/ADVERSARIAL-REVIEW.md`.
+> They are now reflected in the body.
 > **Applied here:** A2 (reserve/settle/release on the lifecycle and the event vocabulary, §6.2,
 > §6.3, §8), A3 (guarantee grades per axis and sealed on the Binding, §2.3a, §5.7),
 > A4 (the frozen facade, §8a), A8 (handle-shaped grant references; non-resolvable journal
@@ -15,7 +16,8 @@
 > Where this document conflicts with the Amendment log, **the amendment log governs**.
 >
 > **Executable semantics supersede prose.** `prototypes/kernel-semantics/src/` (`kernel.ts`,
-> `types.ts`, `capabilities.ts`) is the normative reference for the provider contract, the
+> `types.ts`, `capabilities.ts`) — written up as 17-KERNEL-SEMANTICS.md and
+> 18-KERNEL-INVARIANTS.md — is the normative reference for the provider contract, the
 > proposal channel, and the invocation lifecycle. Where this document's narrative and that code
 > disagree, the code is correct and this document is the defect. The most consequential
 > supersession: **a capability provider holds no kernel handle** (§8, §8a).
@@ -41,7 +43,10 @@ are never interchangeable.
 Sibling documents: the kernel objects this spec depends on are derived in
 05-KERNEL-PRIMITIVES.md; the journal/checkpoint semantics referenced in §6 are specified in
 08-EVENT-AND-STATE-MODEL.md; Grant/policy mechanics in 11-SECURITY-AND-POLICY.md; the
-extension governance machinery in 12-EXTENSION-MODEL.md.
+extension governance machinery in 12-EXTENSION-MODEL.md. The normative kernel semantics and
+invariants this spec must not contradict are 17-KERNEL-SEMANTICS.md and
+18-KERNEL-INVARIANTS.md (in particular I1, the no-branching-on-capability-type rule invoked in
+§2.7.1).
 
 ---
 
@@ -244,6 +249,12 @@ ambiguity this grammar exists to remove).
 | `model.discovery` | tiered | `none < ids-only < typed-tree < probe-conformant` | A | axis 15: `/v1/models` returns IDs; Anthropic's typed tree is the exception |
 | `model.unknownFields` | options | `silent-ignore`, `documented-reject`, `hard-error` | E | axis 16: stripping unknowns is correct on one provider and fatal on another |
 
+The `Enf.` column is the **negotiation** property of §2.3 (`E` = enforced axis, gated at bind
+and invoke; `A` = advisory, routing hint only). It is not the guarantee grade of §2.3a: an axis
+can be negotiation-enforced and still `declared`-grade, which is the common case until a probe
+suite backs it. Reading `E` as "Kyxo guarantees this holds" is precisely the confusion
+amendments A3 and A14 exist to prevent.
+
 `model.unknownFields` deserves emphasis: it is the axis that makes the escape hatch (§7)
 safe. A consumer MUST NOT send undeclared fields to a target declaring `hard-error`, and MUST
 NOT assume undeclared fields were honored by a target declaring `silent-ignore`.
@@ -316,6 +327,11 @@ speaks. The set is normative and closed at the kernel-protocol version (executab
 | `cancellable` | flag | Whether cooperative cancellation is honored. Requests are journaled regardless (§6.2), so a `false` here is a documented non-guarantee rather than a silent one. |
 | `externallyStateful` | flag | Whether the capability's own state lives outside the kernel (provider sessions, remote conversations). Gates checkpoint portability and fork behaviour: a forked lineage cannot assume it owns the remote state its parent created. |
 
+**Where a trait is absent, the kernel degrades to the safe behaviour** rather than assuming
+the capability has it: a non-`probeable` capability's uncertain outcome cannot be resolved by
+probing, and the kernel says so — raising a typed error and leaving the invocation `uncertain` —
+instead of guessing that the effect landed. Absence is never optimism.
+
 **Declaring a trait creates an obligation.** `probeable: true` requires a working `probe`;
 `compensatable: true` requires a working `compensate`; a capability that declares either and
 does not implement it fails conformance (§9.4), and the kernel raises a typed error rather than
@@ -350,12 +366,14 @@ traits does not violate it, for four reasons:
    requests are never honored shows up as a journal pattern, §6.2). "This is an agent" is not
    a claim any test can fail.
 
-The practical test we hold ourselves to: **the kernel source contains no identifier naming a
-category of capability.** It names effect classes and traits only. The universality suite runs
-eleven heterogeneous constructs — raw model, pure tool, MCP server, coding agent, graph
-strategy, opaque A2A remote, human approver, local model, a failing verifier, a deliberately
-malicious capability, and an infinitely recursive one — through the identical contract, and
-they differ only in declared traits and in what they propose.
+This is invariant I1 in 18-KERNEL-INVARIANTS.md, and it is enforced mechanically rather than by
+review: `tests/universality.test.ts` fails the build if kernel or record-format source names any
+capability or branches on a conceptual type. The practical test we hold ourselves to is that
+**the kernel source contains no identifier naming a category of capability** — it names effect
+classes and traits only. The same suite runs eleven heterogeneous constructs (raw model, pure
+tool, MCP server, coding agent, graph strategy, opaque A2A remote, human approver, local model,
+a failing verifier, a deliberately malicious capability, and an infinitely recursive one)
+through the identical contract; they differ only in declared traits and in what they propose.
 
 ## 3. Discovery
 
@@ -712,7 +730,7 @@ and the journal shows both the failure and the retreat.
 
 Three fields deserve emphasis:
 
-- **`grantRef` is a non-resolvable identifier (amendment A8).** It attributes the binding to an
+- **`grantRef` is a non-resolvable identifier (amendment A8; ADR-020).** It attributes the binding to an
   authority for audit; it cannot be exchanged for that authority. The authority itself is the
   kernel-minted handle held by whoever bound, and possession of the handle *is* the right to
   invoke. This is why the sealed record — and the journal events derived from it — are safe to
@@ -747,7 +765,7 @@ Kyxo owns both sides of the boundary and can afford strictness A2A could not (A2
 permissiveness is a consequence of executor opacity; ours is not needed since providers
 signal through typed events, not free state writes).
 
-The eleventh state is `uncertain` (amendment A1 and the executable semantics): an invocation
+The eleventh state is `uncertain` (amendment A1, ADR-019, and the executable semantics): an invocation
 whose external effect may or may not have landed, because the process died between dispatch
 and outcome or a lease expired mid-flight. It is neither interrupted (nothing is waiting to be
 supplied) nor terminal (nothing is known), and it exists so the kernel never has to guess.
@@ -871,6 +889,10 @@ than a design:
 | Contract class | Correctness (a violation double-applies an effect) | Optimization (a miss costs money, not correctness) |
 | On miss | Re-execute under the effect-class rules | Execute normally |
 | Journaled as | `effect.deduplicated` / `delivery.duplicate` — suppression always leaves evidence | Ordinary invocation events |
+
+These two are the load-bearing pair; 17-KERNEL-SEMANTICS.md §9 enumerates all **six**
+distinct dedup mechanisms (delivery, effect, invocation, artifact/CAS, the event dedup that
+MUST NOT exist, and commit-token retry) and is normative where this summary is not exhaustive.
 
 A suppressed duplicate is journaled, never silent: the kernel records that a duplicate arrived,
 which invocation it matched, and what that invocation's outcome was (invariant I14). "Nothing
@@ -1034,7 +1056,7 @@ interface CapabilityProvider {
 }
 ```
 
-**The proposal channel is the whole security story.** What a provider may propose is a closed
+**The proposal channel is the whole security story (ADR-017).** What a provider may propose is a closed
 set — `artifact`, `state`, `usage`, `external`, `evidence`, `delegate`, `progress` — and the
 kernel validates, stages, and commits (or rejects) the set atomically at the commit barrier.
 Staged proposals are never durable: a crash mid-invocation loses candidate effects *by

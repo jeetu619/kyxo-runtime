@@ -239,8 +239,8 @@ suites. Most recent full run:
 
 | Measure | Value |
 |---|---|
-| Seeds | 150 (coverage) + 120 (property) + 400 (extended fuzz) |
-| Operations | 4,500 (coverage) + 4,800 (property) + 24,000 (fuzz) |
+| Seeds | 150 (coverage) + 120 (property) + 1,000 (extended fuzz) |
+| Operations | 4,500 (coverage) + 4,800 (property) + 70,000 (fuzz) |
 | Invariant assertions | 4,500 + 4,800 (one full check per operation) |
 | Violations found and fixed | 5 (see doc 20) |
 | Violations outstanding | 0 |

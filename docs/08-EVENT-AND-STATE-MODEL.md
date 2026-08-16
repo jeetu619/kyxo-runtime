@@ -559,7 +559,7 @@ Amendments A1, A2, A10, A11 and A12 applied to the body; A8 aligned where it tou
 - §3.1: `kyxo.grant.charged` **removed**; `grant.reserved`, `grant.settled`, `grant.released`, `grant.denied` added with emission points; `grant.exhausted` restated as `limit − reserved − settled = 0`.
 - §1, §2.2, §4: "charges" restated as reservations/settlements; settlement moved out of the outcome payload into its own event inside the same atomic commit record.
 - §6.4: checkpoint carries full grant state (limits/reserved/settled/revoked) so a crash cannot strand or double-spend a reservation.
-- §9 rows 3, 8, 15, 17: decrement-at-commit retired explicitly in row 8, with the reason it failed (post-hoc detection, sibling overdraft) preserved.
+- §9 rows 3, 8, 15, 17: decrement-at-commit retired explicitly in row 8, with the reason it failed (post-hoc detection; concurrent in-flight invocations overdrawing one grant chain between dispatch and commit) preserved.
 
 **A10 — prototype-driven contract fixes.**
 - §3.1: `invocation.suspended`/`.resumed` carry the **`origin` discriminator** (provider | policy | kernel) with distinct resume semantics; `invocation.cancel.requested` added as its own kind; `artifact.committed` renamed `artifact.produced` and specified as **once per producing invocation even when the CAS dedups the bytes**, with a label/kind field; `effect.deduplicated` and `delivery.duplicate` added as truth-plane kinds.

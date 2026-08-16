@@ -1,25 +1,34 @@
 # 05 — Kernel Primitives: Deriving the Minimal Vocabulary
 
-> **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
-> binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
-> full findings in `research/ADVERSARIAL-REVIEW.md`.
+> **Post-review status (2026-08-16, phase 2).** This document was drafted before the adversarial
+> review; the review's binding adjudications live in the Amendment log of
+> `research/DESIGN-SPINE.md` (A1–A14), with the full findings in `research/ADVERSARIAL-REVIEW.md`.
+> They are now reflected in the body.
 > **Applied here:** A2 (reserve/settle/release replaces decrement-at-commit, §2.3, §2.7, §7),
 > A3 (guarantee grades sealed on the Binding, §2.2), A4 (frozen kernel facade, §3.3),
 > A8 (handle-identity authority; non-resolvable journal grant references, §2.2, §2.7),
 > A10 (suspension `origin`, journaled cancellation requests, artifact provenance per producing
 > invocation, ArtifactMeta label, fresh cells for children — §2.3, §2.5, §2.6, §3.2),
 > A11 (reliability dedup window ≠ content-keyed replay cache, §2.3, §2.5, §2.8),
+> A13 (negotiation gates eligibility, selection is a userland routing strategy, §6 row 21),
 > plus the `uncertain` invocation state and the executable Checkpoint shape from
-> `prototypes/kernel-semantics/src/` (§2.3, §2.8). **Outstanding:** none.
+> `prototypes/kernel-semantics/src/` (§2.3, §2.8).
+> **Not applicable here (verified, no edit needed):** A9(ii) — the "elevated to FACT" phrasing
+> occurs in doc 06 §6.5, not here; A14 — this document makes no catalog or badge claims.
+> **Outstanding:** none.
 > Where this document conflicts with the Amendment log, **the amendment log governs**.
 >
 > **Executable semantics supersede prose.** `prototypes/kernel-semantics/src/kernel.ts`,
-> `types.ts` and `invariants.ts` are the normative reference for object shapes and lifecycle;
-> where this document's narrative and that code disagree, the code is correct and this
-> document is the defect.
+> `types.ts` and `invariants.ts` are the normative reference for object shapes and lifecycle,
+> written up as 17-KERNEL-SEMANTICS.md (semantics), 18-KERNEL-INVARIANTS.md (invariants I1–I24),
+> 19-CRASH-RECOVERY-MODEL.md and 20-SEMANTIC-TEST-RESULTS.md (falsified designs F-1…F-7).
+> This document derives the *vocabulary*; those documents govern the *mechanism*. Where this
+> document's narrative and that code disagree, the code is correct and this document is the
+> defect.
 
 
-Status: derived from `research/DESIGN-SPINE.md` §2–§3 (pre-adversarial-review). Claim labels follow
+Status: derived from `research/DESIGN-SPINE.md` §2–§3, amended 2026-08-16 against A1–A14 and the
+executable kernel semantics (see the revision record at the end). Claim labels follow
 `research/METHODOLOGY.md`. Everything in this document not carrying an explicit evidence label is
 OUR PROPOSAL. Sibling references: doc 02 (Ecosystem Research), doc 03 (Harness Comparison), doc 04
 (Orchestration Strategies), doc 06 (Capability Contract), doc 08 (Failure Semantics), doc 09/10
@@ -239,7 +248,7 @@ exists because the alternative is guessing. Resolution is an explicit, journaled
 `adopt-landed` (an authority asserts it landed), `compensate` (run the declared compensation),
 or `abandon-failed` (an authority asserts it did not land). A probe that answers `unknown`
 leaves the invocation `uncertain`; the kernel never manufactures a terminal state it cannot
-justify (executable form: `Kernel.resolveUncertainty`, invariant I15).
+justify (executable form: `Kernel.resolveUncertainty`, invariant I15; ADR-019).
 
 ```mermaid
 stateDiagram-v2
@@ -494,21 +503,30 @@ mandatorily ≤ its parent; revocation is transitive over the subtree. Object-ca
 discipline throughout: no ambient authority, and interposition is invisible to the holder.
 
 **Budget lifecycle: reserve at lease, settle at outcome, release the remainder (amendment
-A2).** Decrement-at-commit is retired. The normative model has three moments, each its own
+A2; ADR-014 as amended, ADR-020).** Decrement-at-commit is retired. The normative model has three moments, each its own
 journal event kind:
 
 | Moment | Event | What it does |
 |---|---|---|
-| **Admission** (before dispatch) | `grant.reserved` | Reserves the invocation's declared or estimated cost against every grant in the chain. Reservation is durable *before* the effect is attempted, so a crash cannot lose the hold, and parallel siblings cannot mutually overdraft. Insufficient remainder is refused here (`grant.denied`), before spend. |
+| **Admission** (before dispatch) | `grant.reserved` | Reserves the invocation's declared or estimated cost against **every grant in the chain**. Reservation is durable *before* the effect is attempted, so a crash cannot lose the hold. Insufficient remainder anywhere in the chain is refused here (`grant.denied`) — before spend, not after it. |
 | **Outcome commit** | `grant.settled` | Settles the actual metered cost atomically with the outcome event, in the same commit record. |
 | **Outcome commit** | `grant.released` | Releases the unused portion of the reservation — and the *whole* reservation when the invocation failed, was canceled, or was denied at the commit gate. |
 
 Remaining budget is therefore `limit − reserved − settled` on every grant in the chain, and
-attenuation computes a child's limits from the parent's *remaining* — read fresh at delegation
-time, never from a captured snapshot (the prototype's first attempt overshot exactly there).
-Federation is the same mechanism with lagged settlement, not an exception to it.
+attenuation validates a child's limits against the parent's *current remaining* — read fresh at
+delegation time, never from a captured snapshot (the prototype's first attempt overshot exactly
+there). Federation is the same mechanism with lagged settlement, not an exception to it.
 
-**Authority is handle identity, not knowledge of a name (amendment A8).** A Grant is exercised
+**Limits are ceilings, not allocations (ADR-020).** A child grant's limit bounds what that
+child may consume; it does not carve that amount out of the parent. Sibling limits may
+therefore sum beyond the parent's — thin provisioning — and actual spend is bounded because
+admission checks *every ancestor*, not because the budget was partitioned. This is a
+deliberate choice: AI workloads cannot predict how spend distributes across delegated branches,
+and hard partitioning strands budget in branches that never run. The honest consequence, which
+developer-facing surfaces MUST NOT paper over: "you may spend 4" does not mean 4 are set aside,
+and a sibling may exhaust the parent first. Every such denial is journaled.
+
+**Authority is handle identity, not knowledge of a name (amendment A8; ADR-020).** A Grant is exercised
 by presenting a **kernel-minted handle object**; the kernel keeps a private registry of the
 handles it minted and accepts nothing else. Possession of the handle *is* the authority.
 Consequences, all normative:
@@ -523,7 +541,14 @@ Consequences, all normative:
 - A guard token, mint symbol, or shared secret is *not* an acceptable substitute. The
   prototype's first design exported a `KERNEL_MINT` symbol so handles could be constructed
   where needed; because any module could import the symbol, any module could mint authority.
-  Identity-based registration is what closes that hole (falsified design F-2).
+  Identity-based registration is what closes that hole (falsified design F-2,
+  20-SEMANTIC-TEST-RESULTS.md).
+- **Handles do not survive a process restart, and that is an open design question.** A
+  recovered kernel has minted no handles, so authority must be re-obtained after recovery; the
+  re-acquisition path is deliberately unspecified rather than specified badly, because a
+  "re-issue anything" rule would reopen the hole this decision closes (ADR-020, consequences).
+  For the same reason a handle cannot cross a process or network boundary — remote authority
+  needs a token design, and this decision is explicitly V1-scoped.
 - Revocation and expiry are re-checked at time of use, not only at issue: a grant revoked
   mid-flight fails the invocation at the commit barrier, and the world-effect record is still
   journaled while the artifacts are *not* promoted — the effect happened, the benefit is
@@ -608,7 +633,7 @@ Fork-from-checkpoint is the primary repair and upgrade verb.
 | `definitionHash` | Strategy/config identity, so a resumed or forked lineage can refuse an incompatible definition. |
 | `protocolVersion` | The record-format version the cut was written under. |
 
-**Resume continues a lineage; fork branches one.** These are different verbs with different
+**Resume continues a lineage; fork branches one (ADR-018).** These are different verbs with different
 folds, and conflating them was the phase-1 incoherence this shape exists to fix:
 
 - `resume(checkpoint)` keeps the execution identity and folds the snapshot **plus the committed
@@ -797,7 +822,7 @@ frozen, versioned, conformance-tested contract. Two halves, deliberately asymmet
   The clock is a verb because a strategy that reads a wall clock is a strategy whose replay
   diverges. The list was decided by what four prototypes demonstrably needed, not by what
   seemed complete; 06-CAPABILITY-SPEC.md §8a is the normative statement.
-- **Capability-facing (`InvokeCtx`).** *Data only.* A capability provider receives an
+- **Capability-facing (`InvokeCtx`, ADR-017).** *Data only.* A capability provider receives an
   invocation id, an execution id, an injected `now`, an attempt counter, the request, an
   optional resume payload, and a read-only cancellation signal — and **no kernel handle**. Its
   single channel to durable truth is yielding typed **effect proposals**, which the kernel
@@ -1024,9 +1049,13 @@ Stated here so the adversarial review attacks the right joints:
    open question 6). Our atomicity argument (reservation and settlement must commit with the
    journal) is an argument, not an observation. *Status after amendment A2:* the mechanism is
    now reserve-at-lease / settle-at-outcome / release-remainder with three distinct event kinds
-   (§2.7), which removes the parallel-sibling overdraft hole the original decrement-at-commit
-   model had — but the novelty exposure is unchanged, because no production system meters
-   attenuable authority this way for us to crib from.
+   (§2.7), which closes the window in which concurrent invocations could each pass a check and
+   then all spend — because the hold is taken at admission rather than at commit, and is taken
+   against every ancestor. The novelty exposure is unchanged, because no production system meters
+   attenuable authority this way for us to crib from. A second, sharper exposure surfaced with
+   it: limits are chain-enforced ceilings rather than partitioned allocations (ADR-020), so the
+   guarantee is "no ancestor is ever overspent", not "each child's allowance is set aside".
+   Documentation that implies the latter is a defect, and was one.
 2. **Revocation vs. checkpoints — RESOLVED.** Transitive revoke of a grant subtree conflicted
    with resumable checkpoints embedding grant references (research/notes/prior-art-negotiation-extension.md,
    open question 3). Decision: **grant handles are re-resolved at fork/resume time** against
@@ -1061,7 +1090,7 @@ each change is retained and marked rather than deleted.
 
 | Amendment | Change |
 |---|---|
-| **A2** | §2.7 Grant: decrement-at-commit retired; replaced by the reserve-at-lease / settle-at-outcome / release-remainder table with the three distinct event kinds, remaining-budget formula, and the fresh-read rule for attenuation. §2.3 question 1 rewritten to reserve/settle. §2.7 question 2 and the prior-art implication updated. §7 tension 1 records what A2 fixed (parallel-sibling overdraft) and what it did not (novelty exposure). §2 object graph edge relabeled. |
+| **A2** | §2.7 Grant: decrement-at-commit retired; replaced by the reserve-at-lease / settle-at-outcome / release-remainder table with the three distinct event kinds, remaining-budget formula, and the fresh-read rule for attenuation. §2.3 question 1 rewritten to reserve/settle. §2.7 question 2 and the prior-art implication updated. §7 tension 1 records what A2 fixed (the check-then-spend window) and what it did not (novelty exposure). Aligned with ADR-020: limits are chain-enforced **ceilings**, not partitioned allocations — sibling limits may sum beyond the parent, and surfaces must not present a ceiling as an allocation. §2 object graph edge relabeled. |
 | **A3** | §2.2 Binding: new *Guarantee grades* paragraph — `enforced`/`observed`/`declared` per policy-relevant property, sealed and journaled, with the mediation-waterline scoping. Object graph node relabeled. |
 | **A4** | New §3.3 *The frozen facade*: the host/strategy-facing `KernelApi`/`HarnessCtx` verb list (bind, invoke, resume, cancel, attenuate, getGrant, charge, storeArtifact/readArtifact, scoped journal read, checkpoint, createCell, listCapabilities, Kind verbs, injected clock) frozen at Wave 0, and the capability-facing `InvokeCtx` as data-only with effect proposals as the sole channel to durable truth. ADR-010's scoped replaceability claim noted. |
 | **A8** | §2.7 Grant: authority is kernel-minted **handle identity**; id strings confer nothing; journal grant references are non-resolvable; the falsified `KERNEL_MINT`-symbol design recorded; revocation/expiry re-checked at time of use. §2.2 Binding: handle-shaped grant reference. Prior-art interpretation extended to note all four ocap systems make authority a kernel object. |

@@ -12,7 +12,7 @@ cd prototypes
 npm install
 npx tsc --noEmit
 node --experimental-strip-types --test kernel-semantics/tests/*.test.ts
-KYXO_FUZZ_SEEDS=400 KYXO_FUZZ_LENGTH=60 node --experimental-strip-types kernel-semantics/fuzz.ts
+KYXO_FUZZ_SEEDS=1000 KYXO_FUZZ_LENGTH=70 node --experimental-strip-types kernel-semantics/fuzz.ts
 ```
 
 ---
@@ -32,8 +32,8 @@ KYXO_FUZZ_SEEDS=400 KYXO_FUZZ_LENGTH=60 node --experimental-strip-types kernel-s
 
 **Volume per full run:** 4,500 coverage operations + 4,800 property operations + 32
 crash-point recoveries, with a complete invariant check after **every** operation
-(9,300 invariant evaluations). Extended fuzz adds 24,000 operations over 400 seeds
-(58 s wall-clock).
+(9,300 invariant evaluations). Extended fuzz adds 70,000 operations over 1,000 seeds
+(191 s wall-clock), all clean.
 
 **Coverage distribution** from the most recent 150-seed run — this is what the generated
 workloads actually reached, not what they could have:
