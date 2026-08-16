@@ -1,0 +1,227 @@
+/**
+ * Wave S1 — record format revision `2026-08-17`.
+ *
+ * Resolves blockers B1, B2, B3, B4, B8 (and B9a, B9b, which share the same records and
+ * therefore could not be landed separately without a second breaking revision).
+ *
+ * THE FIVE STRUCTURAL CHANGES
+ *
+ *  1. B1 — Effect claims are acquired at ADMISSION, before dispatch, as committed
+ *     records. Exclusivity is established durably before the world can be touched.
+ *  2. B2/B9b — Grants are a FAMILY-scoped ledger keyed by grant id across the whole
+ *     lineage tree, in every declared unit. Forking cannot reset or multiply authority.
+ *  3. B3 — A landed external effect is committed WHEN YIELDED, not held as a candidate
+ *     until settlement. Yield, suspension and crash cannot lose it.
+ *  4. B4 — One authoritative fold derives all state. Live and replayed state must be
+ *     equal for every committed prefix.
+ *  5. B8 — Every event carries `payloadHash`; the chain covers the hash, not the payload,
+ *     so redaction is possible without breaking integrity.
+ *
+ * THE SCOPE ASYMMETRY (the load-bearing decision of this wave)
+ *
+ *   Protected effects are ANCESTOR-scoped: a lineage is bound by what it and its
+ *   ancestors did to the world, never by what a sibling fork did. Siblings are divergent
+ *   world-lines; A charging a card does not mean B already charged it.
+ *
+ *   Grant budgets are FAMILY-scoped: money spent is spent. Every execution descending
+ *   from one grant draws on one ledger, so no fork can mint spending power.
+ *
+ * Both are folds over committed records, so both survive restart (I25).
+ */
+
+import type {
+  ArtifactRef, CheckpointId, EffectClass, EffectKey, ExecutionId,
+  GrantId, InvocationId, InvocationState,
+} from './types.ts';
+
+export const S1_PROTOCOL_VERSION = '2026-08-17';
+
+/** Root of a lineage tree. Every execution forked from another shares its family. */
+export type FamilyId = string & { readonly __brand: 'FamilyId' };
+export type ClaimId = string & { readonly __brand: 'ClaimId' };
+
+/** Budget units are open: any string unit may be reserved and settled (B9b). */
+export type Units = Readonly<Record<string, number>>;
+
+// ---------------------------------------------------------------------------
+// Effect claims (B1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Exclusivity is derived from the DECLARED effect class, never from capability
+ * identity: classes that cannot be safely repeated require exclusive possession.
+ */
+export function requiresExclusiveClaim(cls: EffectClass): boolean {
+  return cls === 'external-irreversible' || cls === 'external-compensatable';
+}
+
+export type ClaimState =
+  /** Acquired at admission; the holder may dispatch. */
+  | 'held'
+  /** The world is known to have seen the effect. Terminal for protection purposes. */
+  | 'landed'
+  /** Outcome unknown after a crash or timeout. Blocks re-dispatch (I15). */
+  | 'uncertain'
+  /** Known not to have reached the world; the key is free again. */
+  | 'released'
+  /** Landed and settled; retained as protection. */
+  | 'settled';
+
+export interface ClaimRecord {
+  readonly claimId: ClaimId;
+  readonly effectKey: EffectKey;
+  readonly effectClass: EffectClass;
+  readonly exclusive: boolean;
+  readonly holder: InvocationId;
+  readonly executionId: ExecutionId;
+  readonly familyId: FamilyId;
+  /** Sequence in the holder's execution at which the claim was committed. */
+  readonly seq: number;
+  readonly state: ClaimState;
+}
+
+/** A landed effect, recorded where and when it happened, for ancestor-scoped protection. */
+export interface LandedEffect {
+  readonly effectKey: EffectKey;
+  readonly effectClass: EffectClass;
+  readonly executionId: ExecutionId;
+  readonly seq: number;
+  readonly descriptor: string;
+}
+
+// ---------------------------------------------------------------------------
+// Family-scoped grant ledger (B2, B9b)
+// ---------------------------------------------------------------------------
+
+export interface GrantLedgerEntry {
+  readonly id: GrantId;
+  readonly parent?: GrantId | undefined;
+  readonly familyId: FamilyId;
+  readonly rights: readonly string[];
+  readonly limits: Units;
+  /** Held for in-flight invocations, in every declared unit. */
+  readonly reserved: Units;
+  /** Consumed, in every declared unit. Family-wide: forks share one ledger. */
+  readonly settled: Units;
+  readonly revoked: boolean;
+  readonly expiresAt?: number | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Lineage
+// ---------------------------------------------------------------------------
+
+export interface LineageNode {
+  readonly executionId: ExecutionId;
+  readonly familyId: FamilyId;
+  readonly parent?: { readonly executionId: ExecutionId; readonly cutSeq: number } | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Event envelope v2 (B8)
+// ---------------------------------------------------------------------------
+
+export type S1EventKind =
+  | 'execution.created' | 'execution.forked'
+  | 'invocation.admitted' | 'invocation.dispatched'
+  | 'invocation.completed' | 'invocation.failed' | 'invocation.canceled'
+  | 'invocation.suspended' | 'invocation.resumed' | 'invocation.uncertain'
+  | 'invocation.cancel.requested' | 'invocation.uncertainty.resolved'
+  | 'effect.claimed' | 'effect.claim.denied' | 'effect.landed'
+  | 'effect.released' | 'effect.settled' | 'effect.deduplicated'
+  | 'artifact.produced' | 'state.updated' | 'evidence.produced'
+  | 'grant.issued' | 'grant.attenuated' | 'grant.reserved' | 'grant.settled'
+  | 'grant.released' | 'grant.revoked' | 'grant.denied'
+  | 'delivery.duplicate' | 'checkpoint.cut' | 'policy.denied';
+
+export interface S1Event {
+  readonly id: string;
+  readonly seq: number;
+  readonly kind: S1EventKind;
+  readonly schemaVersion: number;
+  readonly protocolVersion: string;
+  readonly executionId: ExecutionId;
+  readonly familyId: FamilyId;
+  readonly invocationId?: InvocationId | undefined;
+  readonly correlationId: string;
+  readonly causationId?: string | undefined;
+  readonly actorId: string;
+  readonly grantId?: GrantId | undefined;
+  readonly occurredAt: number;
+  readonly payload: Readonly<Record<string, unknown>>;
+  /**
+   * B8: hash of the canonical payload. The chain covers THIS, not the payload itself,
+   * so a payload may be tombstoned for redaction while integrity still verifies.
+   */
+  readonly payloadHash: string;
+  readonly artifacts?: readonly ArtifactRef[] | undefined;
+  readonly integrity: { readonly prev: string; readonly self: string };
+}
+
+export interface S1CommitRecord {
+  readonly commitToken: string;
+  readonly executionId: ExecutionId;
+  readonly familyId: FamilyId;
+  readonly events: readonly S1Event[];
+  /** Covers the WHOLE record, not just the events (review #2 finding). */
+  readonly checksum: string;
+}
+
+// ---------------------------------------------------------------------------
+// Derived state — produced ONLY by the fold (B4)
+// ---------------------------------------------------------------------------
+
+export interface ExecutionProjection {
+  readonly executionId: ExecutionId;
+  familyId: FamilyId;
+  correlationId: string;
+  seq: number;
+  lastHash: string;
+  definitionHash: string;
+  parent?: { executionId: ExecutionId; cutSeq: number } | undefined;
+  invocations: Map<InvocationId, {
+    id: InvocationId;
+    capabilityId: string;
+    effectKey: EffectKey;
+    effectClass: EffectClass;
+    grantId: GrantId;
+    state: InvocationState;
+    requiresEvidence: boolean;
+    suspension?: { reason: string; payload: unknown } | undefined;
+  }>;
+  cell: Map<string, unknown>;
+  artifacts: ArtifactRef[];
+  evidence: Map<InvocationId, 'pass' | 'fail'>;
+  cancelRequested: Set<InvocationId>;
+}
+
+/**
+ * One family = one lineage tree = one unit of derived truth.
+ * Claims, landed effects and grants live HERE, not per execution, because forking must
+ * not reset them.
+ */
+export interface FamilyProjection {
+  readonly familyId: FamilyId;
+  executions: Map<ExecutionId, ExecutionProjection>;
+  lineage: Map<ExecutionId, LineageNode>;
+  /** Active + terminal claims, keyed by effect identity. */
+  claims: Map<EffectKey, ClaimRecord>;
+  /** Every landed effect with where it landed — ancestor-scoped protection reads this. */
+  landed: LandedEffect[];
+  /** One ledger per grant id for the whole family (B2). */
+  grants: Map<GrantId, GrantLedgerEntry>;
+  /** Terminal outcomes by effect key, for dedup of safe classes. */
+  outcomes: Map<EffectKey, { invocationId: InvocationId; state: InvocationState; output?: unknown }>;
+}
+
+export function emptyFamily(familyId: FamilyId): FamilyProjection {
+  return {
+    familyId,
+    executions: new Map(),
+    lineage: new Map(),
+    claims: new Map(),
+    landed: [],
+    grants: new Map(),
+    outcomes: new Map(),
+  };
+}

@@ -30,6 +30,12 @@ export function canonical(value: unknown): string {
   return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(obj[k])}`).join(',')}}`;
 }
 
+/** Phase-2 record format: the checksum covers the events array. */
+export function verifyEventsChecksum(record: unknown): boolean {
+  const rec = record as { events?: unknown; checksum?: unknown };
+  return typeof rec.checksum === 'string' && rec.checksum === sha(rec.events);
+}
+
 export interface StorageStats {
   readonly journalRecords: number;
   readonly blobs: number;
@@ -119,23 +125,33 @@ export class Storage {
   }
 
   /**
-   * Read the journal, discarding any trailing torn record. A record is valid iff it
-   * parses AND its checksum covers its events.
+   * Read the journal, discarding any record that does not parse or does not verify.
+   *
+   * WHICH BYTES THE CHECKSUM COVERS IS A RECORD-FORMAT DECISION, NOT A DISK DECISION.
+   * A disk cannot know a format's integrity recipe, so the caller supplies one. The
+   * default is the phase-2 recipe (checksum over events); the S1 format covers the whole
+   * record and passes its own verifier.
+   *
+   * (Found while writing the S1 race suite: with the recipe hard-coded here, every S1
+   * record verified as torn and recovery silently saw an empty journal — a
+   * catastrophic-yet-quiet failure. Recorded as F-11.)
    */
-  readJournal(): { records: unknown[]; discarded: number } {
+  readJournal(verify: (record: unknown) => boolean = verifyEventsChecksum): { records: unknown[]; discarded: number } {
     const out: unknown[] = [];
     let discarded = 0;
     for (const line of this.journal) {
+      let rec: unknown;
       try {
-        const rec = JSON.parse(line) as { events?: unknown; checksum?: string };
-        if (typeof rec.checksum !== 'string' || rec.checksum !== sha(rec.events)) {
-          discarded += 1;
-          continue;
-        }
-        out.push(rec);
+        rec = JSON.parse(line) as unknown;
       } catch {
         discarded += 1;
+        continue;
       }
+      if (!verify(rec)) {
+        discarded += 1;
+        continue;
+      }
+      out.push(rec);
     }
     return { records: out, discarded };
   }
