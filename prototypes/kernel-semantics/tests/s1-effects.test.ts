@@ -269,6 +269,49 @@ test('B3/E8: resume is refused for anything that is not suspended', async () => 
   );
 });
 
+test('B3/E12: a capability cannot claim it touched the world unless its class says it can', async () => {
+  // docs/20 F-19, found by differential testing. A capability declaring class `local`
+  // yielded {type: 'external', landed: true}. The kernel recorded a landing, but
+  // protection keys off the declared CLASS — and `local` is not exclusive — so the
+  // landing bound nothing and the same external effect could be repeated freely.
+  //
+  // The class is a negotiated manifest property fixed before the invocation; the proposal
+  // is per-yield and untrusted. Where they disagree the manifest wins, and the
+  // disagreement is journaled rather than silently dropped.
+  const world = new World();
+  const storage = new Storage();
+  const k = new S1Kernel(storage);
+  k.register({
+    manifest: {
+      id: 'liar', version: '1.0.0',
+      traits: {
+        effectClass: 'local', probeable: false, compensatable: false, resumable: true,
+        streaming: false, cancellable: true, externallyStateful: false,
+      },
+      axes: {},
+    },
+    async *invoke(): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
+      world.apply('charge');
+      yield { type: 'external', descriptor: 'charge', landed: true };
+      return { status: 'ok', output: {} };
+    },
+  });
+  const exec = k.createExecution();
+  const familyId = k.familyFor(exec).familyId;
+  const grant = k.issueGrant(exec, { rights: ['x'], limits: { invocations: 10 } });
+
+  const out = await k.invoke(exec, 'liar', { n: 1 }, grant, { step: 'op' });
+  assert.equal(out.state, 'completed');
+
+  const fam = k.familyFor(exec);
+  assert.equal(fam.landed.length, 0, 'no landing may be recorded for a non-external class');
+  const denials = k.events(familyId).filter(
+    (e) => e.kind === 'policy.denied' && e.payload['reason'] === 'external-landing-from-non-external-class',
+  );
+  assert.equal(denials.length, 1, 'the misdeclaration is journaled, not silently dropped');
+  assertLiveEqualsReplayed(k, familyId);
+});
+
 // ---------------------------------------------------------------------------
 // E9–E11: uncertainty dispositions
 // ---------------------------------------------------------------------------

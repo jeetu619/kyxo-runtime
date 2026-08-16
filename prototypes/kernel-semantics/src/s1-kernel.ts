@@ -466,6 +466,25 @@ export class S1Kernel {
       let next = await gen.next();
       while (!next.done) {
         const proposal = next.value;
+        if (proposal.type === 'external' && proposal.landed && !effectClass.startsWith('external')) {
+          // A capability declaring a non-external class does not get to claim it touched
+          // the world. Accepting this recorded a landing that protection then ignored —
+          // because protection keys off the declared CLASS — so the same external effect
+          // could be repeated freely (docs/20 F-19, found by differential testing).
+          //
+          // The class is a negotiated manifest property, fixed before the invocation; the
+          // proposal is per-yield and untrusted. Where they disagree, the manifest wins
+          // and the disagreement is journaled.
+          this.commit(familyId, execId, [{
+            kind: 'policy.denied', invocationId, grantId: grant.id,
+            payload: {
+              reason: 'external-landing-from-non-external-class',
+              effectKey, effectClass, descriptor: proposal.descriptor,
+            },
+          }]);
+          next = await gen.next(undefined);
+          continue;
+        }
         if (proposal.type === 'external' && proposal.landed) {
           // B3: world truth commits AT YIELD. A later suspension, crash or failure
           // cannot erase it, because it is no longer a candidate.
@@ -563,7 +582,15 @@ export class S1Kernel {
     let evidencePass = false;
     let evidenceSeen = false;
 
-    if (result.status === 'ok') {
+    // Proposals are read whatever the outcome, because `usage` and `evidence` are
+    // OBSERVATIONS about what happened, not OUTPUTS of a successful run. Reading them
+    // only on success meant a capability that consumed 5,000 tokens and then failed was
+    // charged nothing, so a retry loop could spend without limit for the price of one
+    // invocation unit per attempt (docs/20 F-18, found by differential testing).
+    //
+    // The drafts they produce are still filtered below: state and artifact writes are
+    // outputs and must not survive a failure. Only the accounting does.
+    {
       for (const p of proposals) {
         switch (p.type) {
           case 'artifact': {
