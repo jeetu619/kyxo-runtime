@@ -80,6 +80,7 @@ function makeCapability(opts: {
         resumable: true, streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'payments.charge', fields: ['amount','to'] },
     },
     async *invoke(_ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
       if (opts.barrier !== undefined) await opts.barrier.wait();

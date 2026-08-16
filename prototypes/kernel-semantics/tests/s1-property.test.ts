@@ -24,6 +24,7 @@ import { assertS1Invariants } from '../src/s1-invariants.ts';
 import { digest, foldAll } from '../src/s1-fold.ts';
 import { S1Model } from '../reference-model/s1-model.ts';
 import type { ModelUnitPolicy } from '../reference-model/s1-model.ts';
+import { resolveEffectIdentity } from '../src/s1b-identity.ts';
 import { Storage, sha } from '../src/storage.ts';
 import type {
   CapabilityProvider, CapabilityResult, DelegationOutcome, EffectClass,
@@ -65,11 +66,13 @@ function capability(id: string, cls: EffectClass): CapabilityProvider {
       },
       axes: {},
       units: UNIT_POLICY,
+      identity: { operation: `op.${id}`, fields: ['land','fail','id'] },
     },
     async *invoke(ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
       const req = ctx.request as { land?: boolean; declare?: Record<string, number>; fail?: boolean };
       if (req.land === true) {
-        const key = sha({ cap: id, step: 'op', request: ctx.request });
+        const key = resolveEffectIdentity({ capabilityId: id, effectClass: cls, request: ctx.request,
+          schema: { operation: `op.${id}`, fields: ['land','fail','id'] } }).key;
         world.applied.set(key, (world.applied.get(key) ?? 0) + 1);
         yield { type: 'external', descriptor: `applied:${id}`, landed: true };
       }
@@ -128,7 +131,8 @@ async function runSequence(seed: number, steps: Step[]): Promise<void> {
   for (const [i, step] of steps.entries()) {
     const cap = CAPS[step.capIndex]!;
     const request = { land: step.land, fail: step.fail, declare: step.declare, id: step.requestId };
-    const key = sha({ cap: cap.id, step: 'op', request });
+    const key = resolveEffectIdentity({ capabilityId: cap.id, effectClass: cap.cls, request,
+      schema: { operation: `op.${cap.id}`, fields: ['land','fail','id'] } }).key;
 
     // Ask the model first, so its answer is a prediction rather than a rationalisation.
     const modelInvId = `m${String(i)}`;
@@ -227,7 +231,9 @@ test('property: an exclusive effect key is never applied to the world twice', as
       if (!isExclusive) continue;
       for (let id = 0; id < 3; id += 1) {
         for (const fail of [true, false]) {
-          const key = sha({ cap: cap.id, step: 'op', request: { land: true, fail, declare: {}, id } });
+          const key = resolveEffectIdentity({ capabilityId: cap.id, effectClass: cap.cls,
+            request: { land: true, fail, declare: {}, id },
+            schema: { operation: `op.${cap.id}`, fields: ['land','fail','id'] } }).key;
           const count = world.applied.get(key) ?? 0;
           assert.ok(count <= 1, `seed ${String(seed)}: ${cap.cls} key applied ${String(count)} times`);
         }

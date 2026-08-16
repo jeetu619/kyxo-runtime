@@ -16,6 +16,7 @@ import { S1Kernel, AuthorizationError, ClaimDeniedError, S1Error, verifyS1Record
 import { assertS1Invariants } from '../src/s1-invariants.ts';
 import { digest, foldAll } from '../src/s1-fold.ts';
 import type { FamilyId } from '../src/s1-types.ts';
+import { resolveEffectIdentity } from '../src/s1b-identity.ts';
 import { Storage, sha } from '../src/storage.ts';
 import { GrantHandle } from '../src/types.ts';
 import type {
@@ -38,6 +39,7 @@ function hostile(world: World, id = 'hostile'): CapabilityProvider {
         resumable: true, streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: `hostile.op.${id}`, fields: ['land','spam','delegate','usage','n'] },
       units: { usd: { perInvocation: 1, metered: true } },
     },
     async *invoke(ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
@@ -154,7 +156,7 @@ test('attack A4: a capability cannot choose or vary its own effect identity', as
   const world = new World();
   const f = setup(world);
 
-  const key = sha({ cap: 'hostile', step: 'a', request: { land: true } });
+  const key = resolveEffectIdentity({ capabilityId: 'hostile', effectClass: 'external-irreversible', request: { land: true }, schema: { operation: 'hostile.op.hostile', fields: ['land','spam','delegate','usage','n'] } }).key;
   await f.k.invoke(f.exec, 'hostile', { land: true }, f.grant, { step: 'a' });
   assert.equal(f.k.isProtected(f.exec, key as never), true, 'the kernel derived exactly this key');
 
@@ -182,7 +184,7 @@ test('attack A5: yielding many landings does not multiply the ledger', async () 
   assert.equal(world.count('charge'), 5, 'the calls really happened — stated, not hidden');
 
   const fam = f.k.familyFor(f.exec);
-  const key = sha({ cap: 'hostile', step: 'a', request: { spam: 5 } });
+  const key = resolveEffectIdentity({ capabilityId: 'hostile', effectClass: 'external-irreversible', request: { spam: 5 }, schema: { operation: 'hostile.op.hostile', fields: ['land','spam','delegate','usage','n'] } }).key;
   assert.equal(
     fam.landed.filter((l) => l.effectKey === key).length, 1,
     'one effect key, one landing: the ledger stays coherent under abuse',
@@ -295,6 +297,7 @@ test('attack A10: a capability cannot reach the kernel through its context', asy
         streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'liar.op', fields: ['n'] },
     },
     async *invoke(ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
       for (const key of Object.keys(ctx)) seen.push(key);
@@ -346,6 +349,7 @@ test('attack A12: a capability CAN assert a landing that never happened, and it 
         resumable: true, streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'liar.op', fields: ['n'] },
     },
     async *invoke(): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
       // Touches nothing. Reports a landing anyway, then fails.
@@ -361,7 +365,7 @@ test('attack A12: a capability CAN assert a landing that never happened, and it 
   assert.equal(out.state, 'failed');
   assert.equal(world.count('charge'), 0, 'the world was never touched');
 
-  const key = sha({ cap: 'liar', step: 'a', request: { n: 1 } }) as never;
+  const key = resolveEffectIdentity({ capabilityId: 'liar', effectClass: 'external-irreversible', request: { n: 1 }, schema: { operation: 'liar.op', fields: ['n'] } }).key as never;
   assert.equal(k1.isProtected(exec, key), true, 'yet the key is protected on the capability\'s word alone');
 
   // Every route back is closed, by design.
@@ -403,6 +407,6 @@ test('attack A11: an operator cannot assert away a durable landing', async () =>
     () => k2.resolveUncertainty(exec, uncertain[0]!, { kind: 'abandon-failed', authority: 'operator' }),
     (e: unknown) => e instanceof S1Error && /durable landing/.test(e.message),
   );
-  assert.equal(k2.isProtected(exec, sha({ cap: 'hostile', step: 'a', request: { land: true } }) as never), true);
+  assert.equal(k2.isProtected(exec, resolveEffectIdentity({ capabilityId: 'hostile', effectClass: 'external-irreversible', request: { land: true }, schema: { operation: 'hostile.op.hostile', fields: ['land','spam','delegate','usage','n'] } }).key as never), true);
   check(k2, k2.familyFor(exec).familyId);
 });

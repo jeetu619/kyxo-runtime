@@ -22,6 +22,7 @@ import { S1Kernel, ClaimDeniedError, ForkError, BudgetError } from '../src/s1-ke
 import { assertS1Invariants } from '../src/s1-invariants.ts';
 import { digest, foldAll } from '../src/s1-fold.ts';
 import type { FamilyId } from '../src/s1-types.ts';
+import { resolveEffectIdentity } from '../src/s1b-identity.ts';
 import { Storage, CrashError, sha } from '../src/storage.ts';
 import type {
   CapabilityProvider, CapabilityResult, DelegationOutcome, EffectKey,
@@ -43,6 +44,7 @@ function payer(world: World): CapabilityProvider {
         resumable: true, streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'payments.charge', fields: ['id'] },
       units: { usd: { perInvocation: 1, metered: true } },
     },
     async *invoke(ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
@@ -82,7 +84,10 @@ function writer(): CapabilityProvider {
 const LIMITS = { invocations: 40, usd: 100 };
 
 function keyFor(request: unknown, step: string, cap = 'pay.card'): EffectKey {
-  return sha({ cap, step, request }) as EffectKey;
+  return resolveEffectIdentity({
+    capabilityId: 'pay.card', effectClass: 'external-irreversible', request,
+    schema: { operation: 'payments.charge', fields: ['id'] },
+  }).key;
 }
 
 function setup(world: World): {

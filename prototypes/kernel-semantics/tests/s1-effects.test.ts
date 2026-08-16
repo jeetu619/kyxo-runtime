@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { S1Kernel, ClaimDeniedError, S1Error } from '../src/s1-kernel.ts';
 import { digest, foldAll, hasLanded } from '../src/s1-fold.ts';
 import type { FamilyId } from '../src/s1-types.ts';
+import { resolveEffectIdentity } from '../src/s1b-identity.ts';
 import { Storage, CrashError, sha } from '../src/storage.ts';
 import type {
   CapabilityProvider, CapabilityResult, DelegationOutcome, EffectKey,
@@ -42,6 +43,7 @@ function payer(world: World, opts: { skipOnResume?: boolean } = {}): CapabilityP
         resumable: true, streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'payments.charge', fields: ['after'] },
       units: { usd: { perInvocation: 1, metered: true } },
     },
     async *invoke(ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
@@ -68,7 +70,10 @@ function payer(world: World, opts: { skipOnResume?: boolean } = {}): CapabilityP
 }
 
 function keyFor(request: unknown, step = 'charge'): EffectKey {
-  return sha({ cap: 'pay.card', step, request }) as EffectKey;
+  return resolveEffectIdentity({
+    capabilityId: 'pay.card', effectClass: 'external-irreversible', request,
+    schema: { operation: 'payments.charge', fields: ['after'] },
+  }).key;
 }
 
 function setup(world: World, opts: { skipOnResume?: boolean } = {}): {
@@ -297,6 +302,7 @@ test('B3/E12: a misdeclared landing is recorded at the strictest class, never di
         streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'liar.op', fields: ['n'] },
     },
     async *invoke(): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
       world.apply('charge');
@@ -318,7 +324,7 @@ test('B3/E12: a misdeclared landing is recorded at the strictest class, never di
     'recorded at the strictest class, so protection engages despite the bad manifest',
   );
 
-  const key = sha({ cap: 'liar', step: 'op', request: { n: 1 } }) as EffectKey;
+  const key = resolveEffectIdentity({ capabilityId: 'liar', effectClass: 'local', request: { n: 1 }, schema: { operation: 'liar.op', fields: ['n'] } }).key as EffectKey;
   assert.equal(k.isProtected(exec, key), true);
   await assert.rejects(
     () => k.invoke(exec, 'liar', { n: 1 }, grant, { step: 'op' }),

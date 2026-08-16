@@ -22,6 +22,7 @@ import { S1Kernel, ClaimDeniedError, verifyS1Record } from '../src/s1-kernel.ts'
 import { assertS1Invariants } from '../src/s1-invariants.ts';
 import { hasLanded } from '../src/s1-fold.ts';
 import type { FamilyId } from '../src/s1-types.ts';
+import { resolveEffectIdentity } from '../src/s1b-identity.ts';
 import { Storage, CrashError, sha } from '../src/storage.ts';
 import type {
   CapabilityProvider, CapabilityResult, DelegationOutcome, EffectKey,
@@ -43,6 +44,7 @@ function payer(world: World): CapabilityProvider {
         resumable: true, streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'payments.charge', fields: ['id'] },
       units: { usd: { perInvocation: 1, metered: true } },
     },
     async *invoke(ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
@@ -83,7 +85,10 @@ function notes(): CapabilityProvider {
 const GRANT = { rights: ['pay', 'write'], limits: { invocations: 40, usd: 200, spawnDepth: 1 } };
 
 function keyFor(request: unknown, step: string, cap = 'pay.card'): EffectKey {
-  return sha({ cap, step, request }) as EffectKey;
+  return resolveEffectIdentity({
+    capabilityId: 'pay.card', effectClass: 'external-irreversible', request,
+    schema: { operation: 'payments.charge', fields: ['id'] },
+  }).key;
 }
 
 function providers(world: World): CapabilityProvider[] { return [payer(world), notes()]; }

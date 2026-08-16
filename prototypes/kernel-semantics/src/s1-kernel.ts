@@ -26,6 +26,18 @@ import type {
 } from './types.ts';
 import { GrantHandle } from './types.ts';
 import { CrashError, Storage, canonical, sha } from './storage.ts';
+import {
+  type EffectIdentitySchema, type ResolvedEffectIdentity,
+  resolveEffectIdentity, schemeSupported,
+} from './s1b-identity.ts';
+import {
+  type Signer, type WriterLease, type WriterRegistry,
+  assertOwns, macPreimage, WriterFencedError, AuthenticityError,
+} from './s1b-writer.ts';
+import {
+  type UpcasterRegistry, S1B_FORMAT_VERSION, UnsupportedJournalError,
+  canInterpret, defaultUpcasters, envelopeFor,
+} from './s1b-compat.ts';
 
 export class S1Error extends Error {}
 export class ClaimDeniedError extends S1Error {}
@@ -59,6 +71,21 @@ export interface S1InvokeOptions {
   readonly effectClassOverride?: EffectClass;
   /** Units the caller expects to consume; reserved at admission in every unit (B9b). */
   readonly estimate?: Units;
+  /**
+   * Business identity for this operation — an invoice number, an order id, a job id.
+   * Stable across retries BY CONSTRUCTION, which is the property `sha(request)` lacked.
+   * Takes precedence over the capability's identity schema: the caller knows the business
+   * identity, the capability only knows the shape of its own arguments.
+   */
+  readonly idempotencyKey?: string;
+  /** Separates tenants or environments whose business ids may legitimately collide. */
+  readonly namespace?: string;
+  /**
+   * THE ESCAPE HATCH. Permits identity by whole-request hash for an irreversible effect —
+   * the S1 default, which double-charged on a nonce. Requires the `unsafe-effect-identity`
+   * right, is journaled with its reason, and does not propagate to delegated invocations.
+   */
+  readonly unsafeRequestHashIdentity?: { readonly reason: string };
 }
 
 /**
@@ -185,6 +212,32 @@ export class S1Kernel {
   private inAdmission = false;
   /** Test hook: run a callback at the admission race point. */
   raceHook: (() => void) | null = null;
+
+  /**
+   * Writer authority (S1b). When configured, EVERY authoritative append is fenced against
+   * the registry and MACed with the writer's key. When absent the kernel is in
+   * single-process prototype mode and says so — it does not pretend to be fenced.
+   */
+  private lease: WriterLease | null = null;
+  private registry: WriterRegistry | null = null;
+  private signer: Signer | null = null;
+  private readonly upcasters: UpcasterRegistry = defaultUpcasters();
+
+  /**
+   * Take writer ownership of a family. This is the compare-and-set the kernel cannot
+   * perform itself — the registry supplies atomicity, the kernel supplies refusal.
+   */
+  acquireWriter(familyId: FamilyId, registry: WriterRegistry, signer: Signer, writerId: string): WriterLease {
+    const cur = registry.current(familyId);
+    const lease = registry.acquire(familyId, writerId as never, cur?.epoch ?? 0);
+    this.registry = registry;
+    this.signer = signer;
+    this.lease = { ...lease, keyId: signer.keyId };
+    return this.lease;
+  }
+
+  /** Current writer lease, if fenced. */
+  writerLease(): WriterLease | null { return this.lease; }
 
   constructor(storage: Storage) {
     this.storage = storage;
@@ -378,9 +431,31 @@ export class S1Kernel {
     // all see the same bytes, and none of them may see a later mutation (F-36).
     const request = snapshot(rawRequest);
     const effectClass = opts.effectClassOverride ?? provider.manifest.traits.effectClass;
-    // Effect identity is RUNTIME-DERIVED from the invocation inputs. A capability cannot
-    // choose or vary it (PART 2); the caller's request and step are the only inputs.
-    const effectKey = sha({ cap: capabilityId, step: opts.step ?? 'anon', request }) as EffectKey;
+
+    // SEMANTIC EFFECT IDENTITY (S1b). `sha(whole request)` is gone: it answered "are these
+    // the same bytes?" when the question that decides whether to charge a card is "are
+    // these the same operation?" A nonce, a timestamp or a regenerated trace id made every
+    // retry a new effect. See src/s1b-identity.ts.
+    const unsafe = opts.unsafeRequestHashIdentity;
+    if (unsafe !== undefined) {
+      // The escape hatch is rights-gated: possessing it is a deliberate act by whoever
+      // issued the grant, not a boolean a caller can set on a whim.
+      const g = fam.grants.get(grant.id);
+      if (g === undefined || !g.rights.includes('unsafe-effect-identity')) {
+        throw new AuthorizationError(
+          'unsafeRequestHashIdentity requires the `unsafe-effect-identity` right on the grant',
+        );
+      }
+    }
+    const identity = resolveEffectIdentity({
+      capabilityId, effectClass, request,
+      schema: snapshot(provider.manifest.identity),
+      idempotencyKey: opts.idempotencyKey,
+      namespace: opts.namespace,
+      step: opts.step,
+      unsafeAllowRequestHash: unsafe !== undefined,
+    });
+    const effectKey = identity.key;
     const exclusive = requiresExclusiveClaim(effectClass);
     const invocationId = this.id('inv') as InvocationId;
 
@@ -471,6 +546,15 @@ export class S1Kernel {
             capabilityId, request, effectKey, effectClass,
             requiresEvidence: opts.requiresEvidence === true,
             meteredUnits: meteredOf(provider.manifest.units),
+            // Identity is PERSISTED, not recomputed. A format upgrade that changed the
+            // derivation would otherwise silently re-identify every effect in history and
+            // charge them all again (PART 8).
+            identity: {
+              scheme: identity.scheme, source: identity.source,
+              operation: identity.operation, namespace: identity.namespace,
+              semantics: identity.semantics,
+            },
+            ...(unsafe === undefined ? {} : { unsafeIdentityReason: unsafe.reason }),
           } },
         { kind: 'effect.claimed', invocationId, grantId: grant.id,
           payload: { claimId, effectKey, effectClass, exclusive } },
@@ -984,14 +1068,34 @@ export class S1Kernel {
       prev = self;
     }
 
+    // FENCE BEFORE APPEND. A writer that paused, was superseded and woke up holds a stale
+    // epoch and is refused here — with a perfectly valid key and a perfectly valid MAC,
+    // which is exactly the point: authentication is not authorization (PART 9).
+    if (this.lease !== null && this.registry !== null) assertOwns(this.registry, this.lease);
+
+    const commitToken = this.id('ct');
+    const writerId = this.lease?.writerId ?? 'unfenced';
+    const epoch = this.lease?.epoch ?? 0;
+    const compat = envelopeFor(events.map((e) => e.kind));
     const record = {
-      commitToken: this.id('ct'), executionId: execId, familyId, events,
-      checksum: '',
+      commitToken, executionId: execId, familyId,
+      writerId, epoch,
+      formatVersion: compat.formatVersion,
+      requiredFeatures: compat.requiredFeatures,
+      mustUnderstand: compat.mustUnderstand,
+      events, checksum: '',
     };
     // Checksum covers the WHOLE record (review #2 finding).
-    const checksum = sha({ commitToken: record.commitToken, executionId: execId, familyId, events });
+    const checksum = sha({ commitToken, executionId: execId, familyId, events });
+    // The MAC binds the record to its family, writer, epoch and format. That binding is
+    // what makes a GENUINE record stolen from another execution, another fork or an
+    // earlier epoch fail — replay of a valid record was invisible to the S1 checksum.
+    const mac = this.signer === null ? '' : this.signer.sign(macPreimage({
+      commitToken, executionId: execId, familyId, writerId, epoch,
+      formatVersion: compat.formatVersion, events,
+    }));
     try {
-      this.storage.appendCommit({ ...record, checksum });
+      this.storage.appendCommit({ ...record, checksum, mac, keyId: this.signer?.keyId ?? '' });
     } catch (err) {
       if (err instanceof CrashError) throw err;
       // Whether these bytes reached the disk is now UNKNOWN, and the projection below
@@ -1013,7 +1117,17 @@ export class S1Kernel {
   static recover(
     storage: Storage,
     providers: readonly CapabilityProvider[] = [],
-    opts: { quarantine?: boolean } = {},
+    opts: {
+      quarantine?: boolean;
+      /** Verify record MACs. A journal written with a signer must be read with one. */
+      signer?: Signer;
+      /**
+       * Recover a journal whose MACs cannot be verified (key lost or rotated away).
+       * EXPLICIT ONLY — there is no silent downgrade, because "we could not check" and
+       * "we checked and it was fine" must never look the same to an operator.
+       */
+      acceptUnverifiable?: boolean;
+    } = {},
   ): { kernel: S1Kernel; uncertain: InvocationId[]; quarantined?: string[] } {
     const k = new S1Kernel(storage);
     for (const p of providers) k.register(p);
@@ -1056,6 +1170,48 @@ export class S1Kernel {
       if (r.familyId === undefined) continue;          // not an S1 record
       let fam = k.families.get(r.familyId);
       if (fam === undefined) { fam = emptyFamily(r.familyId); k.families.set(r.familyId, fam); }
+      // ---- reader compatibility, BEFORE any event is folded --------------------
+      //
+      // An unknown kind is not ignorable by default. S1 treated it as a no-op and offered
+      // that as EVIDENCE OF SAFETY; a future revision renaming `effect.landed` therefore
+      // made a landing vanish and the card was charged again, invariants green
+      // (docs/20 F-38). Criticality now travels with the record, decided by the writer
+      // that understood it.
+      const verdict = canInterpret(
+        r as { formatVersion?: string; requiredFeatures?: readonly string[]; mustUnderstand?: readonly string[] },
+        r.events as unknown as { kind: string; schemaVersion: number }[],
+        k.upcasters,
+      );
+      if (!verdict.ok) {
+        throw new UnsupportedJournalError(
+          `refusing to recover: ${verdict.reason ?? 'unsupported record'}. ` +
+          'Interpreting it would risk silently omitting semantics that protect effects, ' +
+          'authority or budgets.',
+        );
+      }
+
+      // ---- authenticity --------------------------------------------------------
+      const rr = r as unknown as {
+        commitToken: string; executionId: string; writerId?: string; epoch?: number;
+        formatVersion: string; mac?: string; keyId?: string;
+      };
+      if (opts.signer !== undefined) {
+        const ok = typeof rr.mac === 'string' && rr.mac !== '' && opts.signer.verify(
+          macPreimage({
+            commitToken: rr.commitToken, executionId: rr.executionId, familyId: r.familyId,
+            writerId: rr.writerId ?? 'unfenced', epoch: rr.epoch ?? 0,
+            formatVersion: rr.formatVersion, events: r.events,
+          }),
+          rr.mac ?? '', rr.keyId ?? '',
+        );
+        if (!ok && opts.acceptUnverifiable !== true) {
+          throw new AuthenticityError(
+            `record ${rr.commitToken} failed authentication (keyId ${String(rr.keyId)}). ` +
+            'Pass { acceptUnverifiable: true } to recover without authenticity, deliberately.',
+          );
+        }
+      }
+
       for (const ev of r.events) {
         // Once an execution's chain is broken, everything after the break is unverifiable
         // — its `prev` links to a hash we can no longer confirm. Under quarantine the

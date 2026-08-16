@@ -109,6 +109,19 @@ export interface CapabilityManifest {
   readonly axes: Readonly<Record<string, { readonly value: string; readonly ladder: readonly string[] }>>;
   /** Budget units this capability consumes. Absent unit ⇒ nothing is reserved for it. */
   readonly units?: Readonly<Record<string, UnitPolicy>> | undefined;
+  /**
+   * Which request fields make this operation THE SAME operation (S1b).
+   *
+   * An allowlist, never a blocklist: a nonce is excluded because it was never named, not
+   * because someone remembered to exclude it. Absent + an irreversible effect class ⇒ the
+   * kernel refuses the invocation rather than falling back to hashing the whole request,
+   * which is the S1 behaviour that double-charged on a fresh idempotency nonce.
+   */
+  readonly identity?: {
+    readonly operation: string;
+    readonly fields: readonly string[];
+    readonly namespace?: string | undefined;
+  } | undefined;
 }
 
 // ---------------------------------------------------------------------------

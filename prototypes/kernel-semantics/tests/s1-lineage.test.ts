@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 import { S1Kernel, ClaimDeniedError } from '../src/s1-kernel.ts';
 import { digest, foldAll, protectionFor } from '../src/s1-fold.ts';
 import type { FamilyId } from '../src/s1-types.ts';
+import { resolveEffectIdentity } from '../src/s1b-identity.ts';
 import { Storage, CrashError, sha } from '../src/storage.ts';
 import type {
   CapabilityProvider, CapabilityResult, DelegationOutcome, EffectClass,
@@ -49,6 +50,7 @@ function charger(world: World, effectClass: EffectClass = 'external-irreversible
         streaming: false, cancellable: true, externallyStateful: false,
       },
       axes: {},
+      identity: { operation: 'payments.charge', fields: ['amount'] },
     },
     async *invoke(_ctx: InvokeCtx): AsyncGenerator<EffectProposal, CapabilityResult, DelegationOutcome | undefined> {
       world.apply('charge');
@@ -61,7 +63,10 @@ function charger(world: World, effectClass: EffectClass = 'external-irreversible
 
 /** The effect key the kernel derives for a given call. Mirrors the kernel's recipe. */
 function keyFor(request: unknown, step = 'charge'): EffectKey {
-  return sha({ cap: 'pay.card', step, request }) as EffectKey;
+  return resolveEffectIdentity({
+    capabilityId: 'pay.card', effectClass: 'external-irreversible', request,
+    schema: { operation: 'payments.charge', fields: ['amount'] },
+  }).key;
 }
 
 function assertLiveEqualsReplayed(k: S1Kernel, familyId: FamilyId): void {
