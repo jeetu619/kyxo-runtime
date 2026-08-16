@@ -247,3 +247,19 @@ asserted in the fork tests. It found F-9 within one run of being added.
 **The remaining 42 blockers are catalogued, not fixed.** They are the specification for
 the next phase (doc 22 §4), and the honest summary is that the *semantics* largely
 survived while the *record format* did not.
+
+### F-10 — The commit gate was not durable across suspension
+**Found by:** the distributed-systems reviewer, with a reproduction.
+**What happened.** `requiresEvidence` lived only in the per-call options. `resumeInvocation`
+called settlement with empty options, so a capability could suspend on its first turn and
+then, on resume, ship a production artifact alongside *failing* evidence and return
+`status: 'ok'` — landing `completed` with the artifact promoted. The gate was also lost
+across a restart, since the fold never restored it. Two lines of capability code defeated
+the single most load-bearing claim in the design (doc 17 §4).
+**Fix.** The gate is now a property of the durable invocation record, folded from
+`invocation.admitted` and read at settlement rather than from the caller's options.
+**Now enforced by:** `universality.test.ts` — "the commit gate survives suspension and
+resume".
+
+**Final tally for this phase: 10 findings, all fixed** (F-1…F-10). The remaining
+**52 review findings are catalogued, not fixed** — see doc 22.

@@ -282,6 +282,12 @@ export interface InvocationRecord {
   readonly attempt: number;
   readonly leaseEpoch: number;
   readonly suspension?: { readonly reason: string; readonly payload: unknown } | undefined;
+  /**
+   * The commit gate is a property of the INVOCATION, not of the call that made it.
+   * Holding it only in InvokeOptions let the resume path drop it (review #2 FATAL:
+   * suspend, then ship with failing evidence). See docs/20 F-10.
+   */
+  readonly requiresEvidence: boolean;
   /** Set when state === 'uncertain'. */
   readonly uncertainty?: { readonly descriptor: string; readonly since: number } | undefined;
 }

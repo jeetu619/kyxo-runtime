@@ -586,7 +586,10 @@ export class Kernel {
     // THE COMMIT GATE (I17). Structural: the capability cannot bypass it because it
     // cannot write to the journal at all. Failing verification cannot present as success.
     const evidence = proposals.filter((p): p is Extract<EffectProposal, { type: 'evidence' }> => p.type === 'evidence');
-    if (opts.requiresEvidence === true) {
+    // Read the gate from the durable invocation record: a gate that lives only in the
+    // caller's options is silently dropped by the resume path and lost across a restart.
+    const gated = exec.invocations.get(invocationId)?.requiresEvidence === true || opts.requiresEvidence === true;
+    if (gated) {
       const passed = evidence.some((e) => e.verdict === 'pass');
       if (!passed) {
         const drafts: DraftEvent[] = evidence.map((e) => ({
@@ -1053,6 +1056,7 @@ export class Kernel {
           state: 'admitted',
           attempt: 1,
           leaseEpoch: 1,
+          requiresEvidence: p['requiresEvidence'] === true,
         });
         break;
       case 'invocation.dispatched':

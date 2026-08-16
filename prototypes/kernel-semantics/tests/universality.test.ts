@@ -148,3 +148,24 @@ test('heterogeneous capabilities survive checkpoint, fork and recovery identical
   assert.equal(rec.kernel.state(fork).cell.get('file:f'), 'v', 'forked state is capability-agnostic');
   assertInvariants({ kernel: rec.kernel, storage }, 'fork with mixed capability classes');
 });
+
+test('the commit gate survives suspension and resume (regression: docs/20 F-10)', async () => {
+  const { k, storage } = setup();
+  const e = k.createExecution();
+  const g = k.issueGrant(e, { rights: ['approve'], limits: { invocations: 10, spawnDepth: 1 } });
+
+  // human.approval suspends first, then on resume proposes evidence. Resume with a
+  // REJECTION: the gate must refuse the outcome even though the provider returns ok.
+  const first = await k.invoke(e, 'human.approval', { question: 'ship?' }, g, {
+    step: 'gated', requiresEvidence: true,
+  });
+  assert.equal(first.state, 'suspended');
+
+  const resumed = await k.resumeInvocation(e, first.invocationId, { approved: false }, g);
+  assert.equal(resumed.state, 'failed', 'a gate held only in call options is dropped by the resume path');
+  assert.equal(resumed.error, 'verification-failed');
+
+  const admitted = k.events(e).find((x) => x.kind === 'invocation.admitted')!;
+  assert.equal(admitted.payload['requiresEvidence'], true, 'the gate is journaled at admission');
+  assertInvariants({ kernel: k, storage }, 'gate across suspension');
+});

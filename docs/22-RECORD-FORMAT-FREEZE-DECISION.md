@@ -5,9 +5,9 @@ tests pass once").
 
 # Decision: **NOT READY TO FREEZE**
 
-Unanimous across five specialist reviewers who were given the executable kernel, its
+Unanimous across six specialist reviewers who were given the executable kernel, its
 tests and the normative documents, and who wrote and ran their own attack scripts:
-**17 FATAL, 34 SERIOUS, 9 MODERATE findings, of which 44 block the freeze.** Full record:
+**22 FATAL, 40 SERIOUS, 10 MODERATE findings, of which 52 block the freeze.** Full record:
 `research/ADVERSARIAL-REVIEW-2.md`.
 
 This is the correct outcome, and it is what the phase was for. The alternative — freezing
@@ -21,7 +21,7 @@ of those defects into a permanent compatibility obligation.
 | # | Criterion | Status | Evidence |
 |---|---|---|---|
 | 1 | Semantic specification complete | **PARTIAL** | Docs 17–19 exist and are normative, but reviewers found the spec makes claims the format cannot support (redaction without `payloadHash`; lease/epoch fencing declared but absent; taint declared in doc 11, absent in the kernel) |
-| 2 | No unresolved FATAL issues in this area | **FAILED** | 17 FATAL findings, 8 of them with working reproductions |
+| 2 | No unresolved FATAL issues in this area | **FAILED** | 22 FATAL findings, most with working reproductions |
 | 3 | Property tests pass | **PASS** | 45 tests; 9,300+ invariant assertions per run |
 | 4 | Deterministic model comparison passes | **PASS** | Differential agreement on outcomes, budgets, fork isolation |
 | 5 | Crash matrix passes | **PARTIAL** | All 15 mission crash points covered, but reviewers showed `recover()` performs no integrity verification and silently skips mid-journal corruption |
@@ -41,7 +41,7 @@ of those defects into a permanent compatibility obligation.
 
 ## 2. Blocker taxonomy
 
-The 44 blockers cluster into nine workstreams. Cluster size and independent rediscovery
+The 52 blockers cluster into ten workstreams. Cluster size and independent rediscovery
 matter: five reviewers found the grant-scoping defect separately, four found the
 effect-claim timing defect separately. Convergent discovery is the strongest signal that
 a finding is structural rather than stylistic.
@@ -99,6 +99,27 @@ Redaction-by-tombstone requires a `payloadHash` in the hash preimage — there i
 kernel invariant in doc 11 and does not exist in the kernel.
 **Resolution:** implement, or normatively downgrade and say so. Both are acceptable;
 silence is not.
+
+### B9a. Protection is cut-scoped, not lineage-scoped (FATAL, with reproduction)
+A fork from a checkpoint taken *before* an irreversible effect re-applies it: the child's
+`protectedEffects` is a point-in-time list from the cut, so the effect is simply unknown to
+it. Reproduced: two real charges, `deduplicated` undefined, **zero invariant violations**.
+This is the same failure F-1 and F-6 claimed to close, reached through a door neither
+addressed — both only protect effects already inside the cut, and `fork.test.ts` only ever
+forks from a checkpoint taken *after* the charge, which is why the suite stayed green.
+**Resolution:** landed irreversible/compensatable effects need a lineage-tree-scoped
+durable ledger rooted at the ancestral execution, consulted regardless of which cut a child
+came from. `Checkpoint.protectedEffects` becomes a floor over that ledger rather than a
+snapshot list. Record-format change.
+
+### B9b. Declared usage is settled without validation (FATAL, with reproduction)
+Only the hardcoded `invocations` unit is ever reserved or admission-checked. A capability
+proposing `{tokens: 5_000_000, dollars: 4200}` against limits `{tokens: 100, dollars: 1}`
+had it settled unchallenged — 15,000,000 tokens over three invocations, caught only
+after the fact by the invariant checker. Budgets in any unit other than `invocations` are
+currently advisory.
+**Resolution:** reserve and admission-check every declared unit, not one; validate
+capability-declared usage against the reservation before settling.
 
 ### B9. No time (1 reviewer, SERIOUS)
 No wall clock, deadlines, timers or heartbeats exist. `occurredAt` is a logical counter.
