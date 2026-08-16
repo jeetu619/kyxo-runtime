@@ -232,25 +232,77 @@ test('ID12: different invoice is a different effect — two charges', async () =
   assert.equal(card.charges, 2);
 });
 
-test('ID13: a caller-supplied idempotency key overrides the schema, in both directions', async () => {
+test('ID13: a caller key may override a DECLARED schema only by saying so explicitly', async () => {
+  // SUPERSEDED BEHAVIOUR (docs/30 F-40). S1b's first draft gave the caller key
+  // unconditional precedence. Two independent reviewers broke it the same ordinary way: a
+  // developer following every payments tutorial passed `idempotencyKey: randomUUID()` and
+  // got three charges. The option NAMED FOR the problem had reintroduced it.
+  //
+  // The precedence was backwards. A schema is an audited artifact shipped with the
+  // capability; a call-site string is neither.
   const card = new Card();
   const f = setup(card);
-  // Two DIFFERENT requests the caller declares to be one operation.
-  await attempt(f.k, f.exec as never, f.grant as never, INVOICE, { idempotencyKey: 'job-7' });
-  await attempt(f.k, f.exec as never, f.grant as never, { ...INVOICE, amount: 999 }, { idempotencyKey: 'job-7' });
-  assert.equal(card.charges, 1, 'the caller knows the business identity; it beats the projection');
 
-  // The same request the caller declares to be two operations (a legitimate re-bill).
-  await attempt(f.k, f.exec as never, f.grant as never, INVOICE, { idempotencyKey: 'job-8' });
-  assert.equal(card.charges, 2);
+  await assert.rejects(
+    () => f.k.invoke(f.exec, 'payments.stripe', INVOICE, f.grant, { idempotencyKey: 'job-7' }),
+    (e: unknown) => e instanceof EffectIdentityError && /overrideCapabilityIdentity/.test(e.message),
+  );
+  assert.equal(card.charges, 0);
+
+  const o = { overrideCapabilityIdentity: true };
+  await attempt(f.k, f.exec as never, f.grant as never, INVOICE, { idempotencyKey: 'job-7', ...o });
+  await attempt(f.k, f.exec as never, f.grant as never, { ...INVOICE, amount: 999 }, { idempotencyKey: 'job-7', ...o });
+  assert.equal(card.charges, 1, 'an explicit override still means what it says');
+  await attempt(f.k, f.exec as never, f.grant as never, INVOICE, { idempotencyKey: 'job-8', ...o });
+  assert.equal(card.charges, 2, 'and a deliberate re-bill remains possible');
+});
+
+test('ID13b: the tutorial habit is REFUSED, not silently honoured (F-40)', async () => {
+  const card = new Card();
+  const f = setup(card);
+  for (const n of [1, 2, 3]) {
+    await assert.rejects(
+      () => f.k.invoke(f.exec, 'payments.stripe', INVOICE, f.grant, { idempotencyKey: `attempt-${String(n)}` }),
+      (e: unknown) => e instanceof EffectIdentityError,
+    );
+  }
+  assert.equal(card.charges, 0, 'a per-attempt nonce must never become a per-attempt charge');
 });
 
 test('ID14: namespaces separate tenants whose business ids collide', async () => {
   const card = new Card();
-  const f = setup(card);
-  await attempt(f.k, f.exec as never, f.grant as never, INVOICE, { idempotencyKey: 'INV-1', namespace: 'tenant-a' });
-  await attempt(f.k, f.exec as never, f.grant as never, INVOICE, { idempotencyKey: 'INV-1', namespace: 'tenant-b' });
+  const f = setup(card, carelessPayments(card));
+  const call = (namespace: string) =>
+    f.k.invoke(f.exec, 'payments.careless', INVOICE, f.grant, { idempotencyKey: 'INV-1', namespace });
+  await call('tenant-a');
+  await call('tenant-b');
   assert.equal(card.charges, 2, 'two tenants, two charges');
+});
+
+test('ID25: effectClassOverride cannot silently downgrade an irreversible capability (F-41)', async () => {
+  // Found INDEPENDENTLY by two reviewers, which is the strongest signal a finding is
+  // structural. One type-correct option removed protection, the fail-closed identity rule
+  // and the exclusive claim together, with none of the ceremony the identity escape hatch
+  // carries — a strictly more powerful escape hatch, free, in no doc and no test.
+  const card = new Card();
+  const f = setup(card, carelessPayments(card));
+  await assert.rejects(
+    () => f.k.invoke(f.exec, 'payments.careless', INVOICE, f.grant, {
+      effectClassOverride: 'external-idempotent',
+    }),
+    (e: unknown) => e instanceof AuthorizationError && /unsafe-effect-class-downgrade/.test(e.message),
+  );
+  assert.equal(card.charges, 0);
+
+  const g = f.k.issueGrant(f.exec, {
+    rights: ['pay', 'unsafe-effect-class-downgrade'], limits: { invocations: 10, usd: 100 },
+  });
+  await f.k.invoke(f.exec, 'payments.careless', INVOICE, g, { effectClassOverride: 'external-idempotent' });
+  const familyId = f.k.familyFor(f.exec).familyId;
+  assert.equal(
+    f.k.events(familyId).filter(
+      (e) => e.kind === 'policy.denied' && e.payload['reason'] === 'effect-class-downgraded').length,
+    1, 'a downgrade is a journaled event, not a silent option');
 });
 
 // ---------------------------------------------------------------------------

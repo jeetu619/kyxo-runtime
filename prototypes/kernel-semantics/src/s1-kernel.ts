@@ -78,6 +78,12 @@ export interface S1InvokeOptions {
    * identity, the capability only knows the shape of its own arguments.
    */
   readonly idempotencyKey?: string;
+  /**
+   * Deliberately override a capability's DECLARED identity schema with `idempotencyKey`.
+   * Required whenever both are present, because a declaration must not be overridden by a
+   * value nobody audited (docs/30 F-40).
+   */
+  readonly overrideCapabilityIdentity?: boolean;
   /** Separates tenants or environments whose business ids may legitimately collide. */
   readonly namespace?: string;
   /**
@@ -453,7 +459,27 @@ export class S1Kernel {
     // Snapshot before ANY use: the effect key, the journal record and the capability must
     // all see the same bytes, and none of them may see a later mutation (F-36).
     const request = snapshot(rawRequest);
-    const effectClass = opts.effectClassOverride ?? provider.manifest.traits.effectClass;
+    const declaredClass = provider.manifest.traits.effectClass;
+    const effectClass = opts.effectClassOverride ?? declaredClass;
+    if (opts.effectClassOverride !== undefined
+        && requiresExclusiveClaim(declaredClass) && !requiresExclusiveClaim(effectClass)) {
+      // Relabelling an irreversible capability as repeatable removes protection, the
+      // fail-closed identity rule and the exclusive claim in one option — with none of the
+      // ceremony the identity escape hatch carries. It was an unguarded off-switch
+      // (docs/30 F-41): three charges, and the landing then recorded as repeatable, so the
+      // journal durably asserted that an irreversible charge may be repeated.
+      const g = fam.grants.get(grant.id);
+      if (g === undefined || !g.rights.includes('unsafe-effect-class-downgrade')) {
+        throw new AuthorizationError(
+          `effectClassOverride weakens ${capabilityId} from '${declaredClass}' to ` +
+          `'${effectClass}'; that requires the \`unsafe-effect-class-downgrade\` right`,
+        );
+      }
+      this.commit(familyId, execId, [{
+        kind: 'policy.denied', grantId: grant.id,
+        payload: { reason: 'effect-class-downgraded', capabilityId, declaredClass, usedClass: effectClass },
+      }]);
+    }
 
     // SEMANTIC EFFECT IDENTITY (S1b). `sha(whole request)` is gone: it answered "are these
     // the same bytes?" when the question that decides whether to charge a card is "are
@@ -474,6 +500,7 @@ export class S1Kernel {
       capabilityId, effectClass, request,
       schema: snapshot(provider.manifest.identity),
       idempotencyKey: opts.idempotencyKey,
+      overrideCapabilityIdentity: opts.overrideCapabilityIdentity,
       namespace: opts.namespace,
       step: opts.step,
       unsafeAllowRequestHash: unsafe !== undefined,

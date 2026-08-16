@@ -125,6 +125,8 @@ export interface IdentityInputs {
   readonly namespace?: string | undefined;
   /** Set only by the journaled escape hatch. Never a plain option on the happy path. */
   readonly unsafeAllowRequestHash?: boolean | undefined;
+  /** Deliberately override a capability's declared identity with the caller's key. */
+  readonly overrideCapabilityIdentity?: boolean | undefined;
   /**
    * The caller's workflow step. Participates in identity ONLY on the fallback path, where
    * nobody has declared what the operation is. Under a schema or an idempotencyKey it is
@@ -146,8 +148,34 @@ export function resolveEffectIdentity(input: IdentityInputs): ResolvedEffectIden
   const namespace = input.namespace ?? input.schema?.namespace ?? 'default';
   const exclusive = requiresExclusiveClaim(input.effectClass);
 
-  // 1. Caller-supplied business identity.
-  if (input.idempotencyKey !== undefined) {
+  // 1. Caller-supplied business identity — but ONLY where the capability has not
+  //    declared one, or where the caller explicitly overrides.
+  //
+  //    S1b's first draft gave the caller key precedence unconditionally. An adversarial
+  //    SDK review broke it in the most ordinary way imaginable: a developer following
+  //    every payments tutorial ever written passed `idempotencyKey: randomUUID()` and got
+  //    three charges. The wave exists to stop a fresh nonce becoming a fresh effect, and
+  //    the option NAMED FOR THAT PROBLEM had reintroduced it (docs/30 F-40).
+  //
+  //    The precedence was backwards. A capability's identity schema is an audited artifact
+  //    that ships with the capability; a call-site string is neither. A declaration cannot
+  //    be silently overridden by a value nobody reviewed — overriding it is a deliberate
+  //    act, and it has to look like one.
+  const schemaDeclared = input.schema !== undefined;
+  const mayUseCallerKey = input.idempotencyKey !== undefined
+    && (!schemaDeclared || input.overrideCapabilityIdentity === true);
+
+  if (schemaDeclared && input.idempotencyKey !== undefined && input.overrideCapabilityIdentity !== true) {
+    throw new EffectIdentityError(
+      `${input.capabilityId} declares an identity schema (operation '${input.schema!.operation}'), ` +
+      'so a caller-supplied idempotencyKey would override an audited declaration. ' +
+      'If that is intended — a deliberate re-bill, or a business key the capability cannot ' +
+      'see — pass overrideCapabilityIdentity: true. If you were reaching for a per-attempt ' +
+      'nonce, do not: the schema already makes retries the same effect.',
+    );
+  }
+
+  if (mayUseCallerKey) {
     if (typeof input.idempotencyKey !== 'string' || input.idempotencyKey.trim() === '') {
       throw new EffectIdentityError('idempotencyKey must be a non-empty string');
     }
