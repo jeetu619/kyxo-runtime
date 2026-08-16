@@ -16,6 +16,7 @@ reach. The suite was green throughout.
 | **F-38** | "unknown kind advances the cursor" offered as evidence of safety — a live double-charge path | S1 review | ✅ must-understand |
 | **F-39** | Configuring fencing after the first append leaves an unsigned prefix, indistinguishable from a stripped MAC | self, while writing the authority suite | ✅ fencing configured at construction |
 | **F-40** | **The idempotency option was the double-charge.** A caller `idempotencyKey` outranked a capability's declared schema, so `idempotencyKey: randomUUID()` — the habit every payments tutorial teaches — produced 3 charges. The option *named for the problem* reintroduced it. | **2 reviewers independently** | ✅ a declaration now requires `overrideCapabilityIdentity` to override |
+| **F-42** | **The fold pushed a landing unconditionally on uncertainty resolution**, while the branch six lines above guarded with `hasLanded`. One real charge became two landed records, durably, surviving restart — and invisible to S1-I3 because live and replayed state were equally wrong. Crash-matrix 16/18 walks this exact path and stops one line before a `restart()` would have caught it. | reviewer 6 | ✅ guarded |
 | **F-41** | **`effectClassOverride` was an unguarded off-switch.** One type-correct option removed protection, the fail-closed identity rule and the exclusive claim together, with none of the ceremony the *actual* escape hatch carries. The landing was then recorded as repeatable, so the journal durably asserted an irreversible charge may be repeated. | **2 reviewers independently** | ✅ rights-gated and journaled as a downgrade |
 
 Independent convergence on F-40 and F-41 is the strongest signal available that a finding is
@@ -100,4 +101,36 @@ A test that exercises a mechanism only where it works is a test that measures in
 | property + differential, 60 seeds × 50 steps | 62 pass |
 | seeded fuzz, 10 × 60 ops | clean |
 | phase-1 gates (`kernel/validate.sh`) | all pass |
-| independent adversarial review, 4 of 6 reporting | **~40 findings, 12 FATAL** |
+| independent adversarial review, **6 of 6 reporting** | **~50 findings, 13 FATAL** |
+
+
+---
+
+## 6. Findings from the sixth reviewer (event sourcing)
+
+Confirms F1 (must-understand outside both envelopes) independently — **three reviewers
+reached it separately**, which is the strongest convergence in either wave. Adds:
+
+- **S1b-11 — quarantine repeals family-scoped protection silently.** Quarantine stops
+  folding one *execution*; claims, landings and grants are *family*-scoped. Dropping the
+  record carrying `invocation.admitted + effect.claimed` yields `landed: 0, claims: 0`, the
+  fork stays usable, and the retry charges again — while the operator report says only
+  `"seq 7 follows 2"`. **Now fixed**: the invariants run under quarantine and the violation
+  is reported as *"protection, authority or budget may have been repealed."*
+- **S1b-12 — no family-level ordering key.** Re-interleaving two executions' records — every
+  per-execution `seq` dense, every chain link intact — changes the `landed` log order and
+  fails S1-I3 on a *correct* journal. Any partitioned log or sharded table does this.
+  Format-level.
+- **S1b-13 — `foldEvent` is neither total nor idempotent.** Seven malformed-input crash
+  classes escape `recover()` even under quarantine; folding the same records twice doubles
+  `landed` and the reserved ledger.
+- **S1b-14 — no storage conformance contract.** Ten guarantees the in-memory `Storage`
+  silently over-delivers, enumerated: atomic-per-record append, ack==durable, read order ==
+  write order, no duplicate delivery (and the fold is not idempotent), unbounded size, and
+  more. `CommitFailedError` — the F-27 fix — is **unreachable** with the shipped `Storage`.
+- **S1b-15 — the crash matrix does not cover any S1b mechanism.** All 18 positions and the
+  sweep construct `new S1Kernel(storage)`: unfenced, unsigned. Zero coverage of writer
+  acquisition, epoch transition, MAC write or identity resolution.
+- Performance, measured: fold is O(N·L) (0→2.3 ms at L=0, 393 ms at L=32 000);
+  `protectionFor` is a linear scan **on the admission path**; `events()` re-parses and
+  re-SHAs the whole journal per call (208 ms at 3 602 records) and `fork()` calls it.

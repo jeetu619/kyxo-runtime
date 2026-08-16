@@ -234,7 +234,11 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
           if (next === 'released') fam.claims.delete(key);
           else fam.claims.set(key, { ...c, state: next });
         }
-        if (p['landed'] === true) {
+        // GUARDED. This push had no `hasLanded` check while the branch above it did, so
+        // an ordinary crash-then-probe recorded a SECOND landing for one real charge —
+        // S1-I4 violated durably, surviving restart, invisible to S1-I3 because live and
+        // replayed state were equally wrong (docs/30 F-42).
+        if (p['landed'] === true && !hasLanded(fam, key)) {
           fam.landed.push({
             effectKey: key,
             effectClass: (p['effectClass'] as EffectClass) ?? 'external-irreversible',

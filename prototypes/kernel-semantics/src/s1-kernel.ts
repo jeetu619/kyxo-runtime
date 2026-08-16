@@ -20,6 +20,7 @@ import {
   type Units, emptyFamily, requiresExclusiveClaim, S1_PROTOCOL_VERSION,
 } from './s1-types.ts';
 import { chainBlocked, foldEvent, hasLanded, protectionFor, remaining } from './s1-fold.ts';
+import { assertS1Invariants } from './s1-invariants.ts';
 import type {
   CapabilityProvider, EffectClass, EffectKey, EffectProposal, ExecutionId,
   GrantId, InvocationId, InvocationState, PolicyStage, UncertaintyDisposition, UnitPolicy,
@@ -1300,6 +1301,34 @@ export class S1Kernel {
         const n = Number(ev.id.split('_')[1] ?? 0);
         if (n > k.counter) k.counter = n;
         if (ev.occurredAt > k.clock) k.clock = ev.occurredAt;
+      }
+    }
+
+    // THE INVARIANTS NOW RUN ON THE RUNTIME PATH.
+    //
+    // `assertS1Invariants` having zero call sites in `src/` was S1's single largest
+    // finding, and S1b reproduced it four times over (schemeSupported, verifyRecordedIdentity,
+    // upcast, and this). A checker that only tests call is a checker that measures intent.
+    //
+    // Recovery is the right place: it is where a journal of unknown provenance becomes
+    // live state, and it is the one moment where refusing costs nothing that is not
+    // already lost. A violation here means the journal describes a world that cannot
+    // exist, and folding on would make the runtime act on it.
+    for (const fam of k.families.values()) {
+      try {
+        assertS1Invariants(fam, { events: k.events(fam.familyId) });
+      } catch (err) {
+        if (opts.quarantine !== true) throw err;
+        // Under quarantine the prefix is deliberately partial, so a violation is expected
+        // — but it MUST be reported. Quarantine drops records for one execution while
+        // claims, landings and grants are FAMILY-scoped, so dropping an admission record
+        // can repeal protection for the whole family and let a retry charge again. The
+        // operator report used to say only "seq 7 follows 2"; it never said a landing was
+        // dropped or that protection was repealed (docs/30 S1b-11).
+        quarantined.push(
+          `family ${fam.familyId}: recovered state violates an invariant — ${String(err)}. ` +
+          'Protection, authority or budget may have been repealed by the quarantine.',
+        );
       }
     }
 
