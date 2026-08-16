@@ -40,26 +40,57 @@ docs/
   13-FUTURE-SCENARIO-TEST.md      Architecture vs 15+ hypothetical future paradigms
   14-MVP-ARCHITECTURE.md          Smallest architecture that tests the hypothesis
   15-IMPLEMENTATION-ROADMAP.md    Implementation waves
-  16-ADR/                         Architecture Decision Records
+  16-ADR/                         Architecture Decision Records (001-021)
+  17-KERNEL-SEMANTICS.md          Normative semantics: journal, commit, fork, dedup, lineage
+  18-KERNEL-INVARIANTS.md         25 invariants: rationale, enforcement, test, failure mode
+  19-CRASH-RECOVERY-MODEL.md      Crash matrix and failure semantics
+  20-SEMANTIC-TEST-RESULTS.md     What was tested, what was falsified, what remains at risk
+  21-AMENDMENT-RECONCILIATION.md  A1-A14 ledger
+  22-RECORD-FORMAT-FREEZE-DECISION.md  Freeze gate: NOT READY, with the blocker taxonomy
 prototypes/
-  kernel/                 Type-level and small runnable prototypes validating the kernel
+  kernel/                 Phase-1 universality demo (eight constructs, one invocation path)
+  harness/ graph/ loop/   Phase-1 strategy demos
+  kernel-semantics/       Phase-2 executable kernel: src/, tests/, reference-model/, fuzz.ts
 ```
 
 ## Status
 
-The architecture phase is complete. Recommendation: **BUILD WITH CHANGES** — see
-`docs/01-EXECUTIVE-THESIS.md`. Ten adversarial reviewers (eight personas, two auditors) voted
-BUILD WITH CHANGES unanimously and answered the "useful primitive layer or merely another
-abstraction layer?" gate question QUALIFIED-YES unanimously, producing 121 findings
-(7 FATAL, 49 SERIOUS). All FATAL findings are adjudicated as binding amendments **A1–A14** in
-the Amendment log of `research/DESIGN-SPINE.md`.
+**Phase 1 (architecture): complete.** Recommendation: **BUILD WITH CHANGES** — see
+`docs/01-EXECUTIVE-THESIS.md` and, for the re-argued version, `docs/16-ADR/ADR-021`.
 
-**Reading the amendments correctly:** the amendment log is authoritative. Documents 02–15 and
-the ADRs were written before the review; each carries a status banner naming which amendments
-are applied in its body and which are adopted-but-not-yet-reflected. Where a document and the
-amendment log disagree, the amendment log governs. Reconciling the remaining body text is the
-outstanding editorial work (it changes no decision — every decision is recorded in the
-amendment log and summarized in the thesis).
+**Phase 2 (executable kernel semantics): complete.** The semantics are now executable and
+were attacked by five specialist reviewers with the code in hand. Record-format decision:
+**NOT READY TO FREEZE** — `docs/22-RECORD-FORMAT-FREEZE-DECISION.md`. Nine defects were
+found and fixed during the phase; 44 further findings block the freeze and constitute the
+specification for the next phase. The kernel *semantics* largely survived; the *record
+format* did not.
+
+Run the executable semantics:
+
+```bash
+cd prototypes && npm install
+npx tsc --noEmit
+node --experimental-strip-types --test kernel-semantics/tests/*.test.ts
+KYXO_FUZZ_SEEDS=1000 KYXO_FUZZ_LENGTH=70 node --experimental-strip-types kernel-semantics/fuzz.ts
+```
+
+### How the two reviews went
+
+**Review #1 (architecture, ten reviewers: eight personas + two auditors)** voted BUILD WITH
+CHANGES unanimously and answered the "useful primitive layer or merely another abstraction
+layer?" gate question QUALIFIED-YES unanimously, producing 121 findings (7 FATAL, 49
+SERIOUS). Its FATAL findings became binding amendments **A1–A14** in the Amendment log of
+`research/DESIGN-SPINE.md`; all fourteen are now reconciled across the documents
+(`docs/21-AMENDMENT-RECONCILIATION.md`).
+
+**Review #2 (executable semantics, five specialist reviewers with the code and tests in
+hand)** voted NOT READY TO FREEZE unanimously, producing 17 FATAL / 34 SERIOUS / 9 MODERATE
+findings, 44 of them freeze-blocking, several with working reproductions and several
+discovered independently by multiple reviewers. Record: `research/ADVERSARIAL-REVIEW-2.md`.
+
+**Precedence:** the executable semantics (`prototypes/kernel-semantics/`, specified in docs
+17–19) govern where they disagree with earlier prose; the Amendment log governs where it
+disagrees with document bodies.
 
 ## Reading order
 
@@ -77,8 +108,13 @@ amendment log and summarized in the thesis).
 Prototypes are TypeScript with zero runtime dependencies, runnable on Node ≥ 22:
 
 ```
-cd prototypes && npx tsc --noEmit   # type-check
-node --experimental-strip-types kernel/demo.ts
+cd prototypes && npm install
+npx tsc --noEmit                                              # type-check everything
+node --experimental-strip-types --test kernel-semantics/tests/*.test.ts   # 45 semantic tests
+bash kernel/validate.sh                                        # phase-1 universality gates
 ```
 
-They are throwaway validation artifacts, not the beginning of the implementation.
+The phase-1 prototypes are throwaway validation artifacts. The phase-2 kernel-semantics
+prototype is a **reference implementation of the specification**, not production code: it
+exists to make the semantics executable and falsifiable, and doc 22 records why it is not
+yet a foundation to build on.
