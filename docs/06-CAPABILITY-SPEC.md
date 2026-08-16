@@ -3,7 +3,22 @@
 > **Post-review status (2026-08-16).** This document predates the adversarial review; the review's
 > binding adjudications live in the Amendment log of `research/DESIGN-SPINE.md` (A1–A14), with the
 > full findings in `research/ADVERSARIAL-REVIEW.md`.
-> **Applied here:** none. **Adopted but not yet reflected in this document's body:** A2, A3, A4, A8, A9(ii), A10, A11, A13, A14. Where this document conflicts with the Amendment log, **the amendment log governs**; reconciling this body text is tracked as remaining editorial work.
+> **Applied here:** A2 (reserve/settle/release on the lifecycle and the event vocabulary, §6.2,
+> §6.3, §8), A3 (guarantee grades per axis and sealed on the Binding, §2.3a, §5.7),
+> A4 (the frozen facade, §8a), A8 (handle-shaped grant references; non-resolvable journal
+> references, §5.2, §5.3, §5.7), A9(ii) (Realtime/Live relabeled INFERENCE/HIGH; the
+> "elevated to FACT" phrasing deleted, §6.5, §8), A10 (tiered ladders are manifest data, §2.2;
+> suspension `origin`, §6.4; journaled cancellation requests, §6.2), A11 (reliability dedup
+> window ≠ replay cache, §6.3), A13 (the selection contract, §4.4), A14 (catalog scope and
+> badge discipline, §3.4). Also adds the capability **trait** set the executable kernel branches
+> on (§2.7). **Outstanding:** none.
+> Where this document conflicts with the Amendment log, **the amendment log governs**.
+>
+> **Executable semantics supersede prose.** `prototypes/kernel-semantics/src/` (`kernel.ts`,
+> `types.ts`, `capabilities.ts`) is the normative reference for the provider contract, the
+> proposal channel, and the invocation lifecycle. Where this document's narrative and that code
+> disagree, the code is correct and this document is the defect. The most consequential
+> supersession: **a capability provider holds no kernel handle** (§8, §8a).
 
 
 **Status: V0 DRAFT (pre-adversarial-review).** This document is the normative specification of
@@ -130,10 +145,16 @@ Four value shapes are defined:
 | `flag` | boolean presence | `enabled` |
 | `quantitative` | numeric limit (context tokens, payload bytes) **[V0-OPEN — not in prototype]** | `min` |
 
-The ladder being manifest data — not kernel knowledge — is deliberate: the kernel compares
-tier positions without understanding axis semantics, so new axes never require kernel
-changes (SOURCE-CODE OBSERVATION of our own prototype, `prototypes/kernel/types.ts`
-`AxisValue`).
+**A tiered axis MUST carry its own ordered ladder as manifest DATA (normative; amendment
+A10).** The kernel compares positions *within the ladder the manifest supplied*; it holds no
+table of axis semantics, no built-in ordering, and no knowledge of what `cfg` means or why it
+outranks `json-mode`. A manifest declaring `shape: "tiered"` without a `ladder` is invalid,
+and a requirement expressed as `tier-at-least` against an axis whose ladder does not contain
+the requested tier fails the bind rather than guessing an ordering. This is the property that
+lets a 2030 axis negotiate on a 2026 kernel binary: adding an axis is publishing data, never
+shipping kernel code (SOURCE-CODE OBSERVATION of our own prototype —
+`prototypes/kernel-semantics/src/types.ts`, `CapabilityManifest.axes:
+Record<string, { value, ladder }>`).
 
 Booleans are rejected as the axis type because the evidence shows headline features
 decompose into independently-varying sub-axes: "supports reasoning" decomposes into
@@ -160,6 +181,38 @@ opacity: enforce what the envelope can check, advise about what it cannot.
 **Implication** — the intersection algorithm (§5.3) consumes enforced axes only; advisory
 axes feed routing (§4.3). A manifest that marks a negotiable axis advisory is invalid.
 **Confidence** — HIGH.
+
+### 2.3a Guarantee grades (normative; amendment A3)
+
+`enforcement` and *guarantee grade* answer two different questions and MUST NOT be conflated:
+
+- `enforcement: enforced | advisory` — **does the kernel gate on this axis?** It is a
+  negotiation property: enforced axes participate in the intersection and their unsolicited
+  use is a typed error; advisory axes only inform selection.
+- `guaranteeGrade: enforced | observed | declared` — **what backs the claim that the property
+  actually holds in the world?** It is an honesty property, sealed on the Binding (§5.7) and
+  journaled.
+
+| Grade | Meaning | What earns it |
+|---|---|---|
+| `enforced` | Kernel-mediated: the behaviour cannot deviate without going through kernel mediation. | The property is realised **below the mediation waterline** — local tools, self-hosted/open models, sandboxed effects — where Kyxo owns the execution path. |
+| `observed` | Post-hoc reconciliation: deviation is detectable after the fact from journaled outcomes or probe Evidence, not preventable. | A probe suite (§4.1) covers the axis, or outcome telemetry reconciles the claim (e.g. a provider's reported usage against metered budget). |
+| `declared` | Manifest-trusted: the publisher's word, signed but unverified. | Nothing beyond the signature. This is the **default** for any axis with no probe backing. |
+
+Normative rules:
+
+1. Every enforced axis in a sealed Binding MUST carry a grade. A Binding that gates policy on
+   a property whose grade it cannot state is invalid.
+2. `enforced` MUST NOT be claimed above the mediation waterline. Delegated vendor harnesses
+   and provider-side execution domains are `observed` at best — attestation plus audit, never
+   kernel enforcement (this is the honest-positioning half of A3).
+3. Grade never widens silently. A capability whose probe Evidence expires falls back to
+   `declared`, and that fallback is journaled; it does not keep an `observed` grade it can no
+   longer support.
+4. Grades are per property, not per capability. A single model adapter routinely carries
+   `enforced` on budget metering (the kernel counts), `observed` on structured-output
+   conformance (probes verify), and `declared` on data-residency claims (nobody local can
+   check).
 
 ### 2.4 The model-facing axis catalog
 
@@ -240,6 +293,65 @@ task shape, and `suspendSchemas`: a map from suspension reason to
 currency every surveyed framework independently adopted — INFERENCE/HIGH
 (research/notes/agent-frameworks-crewai-pydantic-llamaindex-mastra-letta.md, Implication 6).
 
+### 2.7 Capability traits: the only things the kernel branches on
+
+Beside its axes, every manifest declares a small, closed `traits` record. Traits are the
+*mechanical* properties the kernel needs in order to perform recovery, accounting, and
+cancellation correctly — as distinct from axes, which describe the *dialect* a capability
+speaks. The set is normative and closed at the kernel-protocol version (executable form:
+`CapabilityTraits` in `prototypes/kernel-semantics/src/types.ts`):
+
+| Trait | Type | What the kernel does with it |
+|---|---|---|
+| `effectClass` | `pure \| local \| external-idempotent \| external-compensatable \| external-irreversible` | Decides every recovery question: whether a re-lease after an unknown outcome is safe, whether a fork may replay the effect, whether an uncertain outcome may be auto-resolved. |
+| `probeable` | flag | Whether `resolveUncertainty({kind:'probe'})` is available — i.e. whether the kernel can ask "did my effect land?" instead of guessing. |
+| `compensatable` | flag | Whether `compensate` is a legal disposition for a landed effect. Compensation is the normative repair for irreversible effects (A1). |
+| `resumable` | flag | Whether the capability may suspend and be re-entered with a typed payload. Re-entry re-invokes the provider, so a `resumable` capability MUST be able to reconstruct its position from the suspension payload alone — no serialized continuation is preserved. |
+| `streaming` | flag | Whether incremental output precedes the outcome. Streamed content is **advisory plane only**; it is never durable truth. |
+| `cancellable` | flag | Whether cooperative cancellation is honored. Requests are journaled regardless (§6.2), so a `false` here is a documented non-guarantee rather than a silent one. |
+| `externallyStateful` | flag | Whether the capability's own state lives outside the kernel (provider sessions, remote conversations). Gates checkpoint portability and fork behaviour: a forked lineage cannot assume it owns the remote state its parent created. |
+
+**Declaring a trait creates an obligation.** `probeable: true` requires a working `probe`;
+`compensatable: true` requires a working `compensate`; a capability that declares either and
+does not implement it fails conformance (§9.4), and the kernel raises a typed error rather than
+proceeding on the strength of the claim. Traits carry guarantee grades like any other declared
+property (§2.3a): `effectClass` on a sandboxed local tool is `enforced` (the kernel mediates
+the syscall boundary); `effectClass` on a remote payment API is `declared` until a probe suite
+backs it.
+
+#### 2.7.1 Why this is not "branching on capability kind"
+
+The kernel invariant is that no kernel code path may branch on *what kind of thing* a
+capability is — model, tool, agent, harness, human, remote runtime. Branching on declared
+traits does not violate it, for four reasons:
+
+1. **Kind is identity; traits are declared, negotiated properties.** Branching on kind is the
+   UA-string mistake — identity sniffing, which the negotiation literature settled against
+   decades ago (FACT, research/notes/prior-art-negotiation-extension.md §12). Branching on a
+   declared trait is feature detection, which is the settled *correct* form of the same
+   operation.
+2. **The trait vocabulary is closed and versioned; the kind vocabulary is open and grows with
+   fashion.** New categories of thing (swarm, judge, memory manager, whatever 2029 names)
+   arrive constantly and would each demand kernel changes. The seven traits above are part of
+   the kernel protocol and change only with a protocol revision — which is exactly the
+   difference between data the kernel reads and code the kernel ships.
+3. **Traits cut across kinds, and that is the point.** A payment API and an email sender are
+   different kinds and identical to the kernel: both `external-irreversible`, both get the
+   never-auto-retry path, both must resolve uncertainty explicitly. One LLM adapter is
+   `externallyStateful` (a Realtime session) and another is not, though both are "models". If
+   kind determined mechanics, neither of those facts could be expressed.
+4. **Traits are falsifiable; kinds are not.** A declared trait is checkable by probe and
+   contradictable by journaled outcomes (a capability declaring `cancellable` whose cancel
+   requests are never honored shows up as a journal pattern, §6.2). "This is an agent" is not
+   a claim any test can fail.
+
+The practical test we hold ourselves to: **the kernel source contains no identifier naming a
+category of capability.** It names effect classes and traits only. The universality suite runs
+eleven heterogeneous constructs — raw model, pure tool, MCP server, coding agent, graph
+strategy, opaque A2A remote, human approver, local model, a failing verifier, a deliberately
+malicious capability, and an infinitely recursive one — through the identical contract, and
+they differ only in declared traits and in what they propose.
+
 ## 3. Discovery
 
 Discovery has three planes, deliberately separated (the static/dynamic split MCP's registry
@@ -288,6 +400,32 @@ watched the registry can still bind. This is MCP's stateless-pivot lesson — th
 was deleted in favor of self-describing requests plus an optional cached `server/discover` —
 INFERENCE/HIGH (research/notes/mcp-protocol.md §3, Implication 2).
 
+### 3.4 What the catalog actually promises (normative scope; amendment A14)
+
+A manifest grammar is cheap to specify and expensive to populate. The scope of the shipped
+catalog is therefore a normative statement, not an aspiration:
+
+1. **V1 ships conformance-derived manifests for the four MVP adapters only** — Anthropic
+   Messages, OpenAI Responses, Gemini, and one OpenAI-compat adapter carrying a vLLM manifest
+   and an Ollama manifest (the roster is doc 14's, canonical per amendment A7).
+   *Conformance-derived* has a specific meaning: every axis marked as probe-backed in those
+   manifests was generated from a recorded probe run against a real target, with the Evidence
+   artifact retained and referenced. Nothing else in the catalog is a Kyxo claim.
+2. **The community catalog is a governance deliverable, not a kernel promise** (it belongs to
+   the Wave-0 governance workstream, amendment A5). Third-party manifests are publishable to
+   the registry and bind exactly like first-party ones — but they enter at `declared` grade
+   carrying their publisher's signature, and no amount of registry presence upgrades them.
+3. **Enforcement badges appear only on probe-backed axes.** Any surface that renders capability
+   claims — registry UI, `kyxo capability describe`, docs tables — MUST render a probe-backed
+   axis and a manifest-trusted axis differently, and MUST label manifest-trusted axes
+   `declared` (§2.3a). A badge that does not distinguish "we verified this" from "they told us
+   this" is a lie with a checkmark on it.
+4. **Curation cost is per-target and ongoing.** Manifests drift when providers drift (parser
+   breakage across DeepSeek v3→v3.2 is the documented case,
+   research/notes/open-model-infrastructure.md OQ2). Four targets is the number we can commit
+   to re-probing on a schedule; the honest consequence is that catalog breadth is a funded
+   governance activity rather than an emergent property of publishing a schema.
+
 ## 4. Probes and telemetry: the three information sources
 
 Declared capability ≠ competence (spine §1 C3). The contract therefore has three information
@@ -300,10 +438,11 @@ flowchart LR
         P["Probed<br/>Evidence artifacts<br/>(what you verified)"]
         O["Observed<br/>per-binding telemetry<br/>(what actually worked)"]
     end
-    D -->|gates eligibility| R[Routing / selection]
-    P -->|gates eligibility| R
-    O -->|drives selection| R
-    R --> B[bind → sealed Binding]
+    D -->|gates eligibility| N["Negotiation (kernel)<br/>intersect → eligible set"]
+    P -->|gates eligibility| N
+    N -->|"eligible candidates"| S["Selection strategy (userland)<br/>rank(candidates, telemetry, policy)"]
+    O -->|drives selection| S
+    S -->|"choice + journaled rationale"| B["bind → sealed Binding<br/>+ guarantee grades"]
     B -->|outcomes journaled| O
 ```
 

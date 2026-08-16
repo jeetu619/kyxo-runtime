@@ -135,6 +135,31 @@ test('forking with an in-flight pending invocation requires an explicit disposit
   assertInvariants({ kernel: k2, storage }, 'fork with adopt disposition');
 });
 
+test('irreversible-effect protection survives a process restart (regression: docs/20 F-6)', async () => {
+  const { k, storage, pay } = setup();
+  const a = k.createExecution();
+  const grant = k.issueGrant(a, { rights: ['pay'], limits: { invocations: 20, spawnDepth: 1 } });
+  await k.invoke(a, 'payment.charge', { amount: 500 }, grant, { step: 'charge' });
+  assert.equal(k.state(a).protectedEffects.size, 1, 'protected while live');
+
+  // Restart. Protection must be rebuilt from committed evidence, not lost with memory.
+  const rec = Kernel.recover(storage, [...ALL_CAPABILITIES, pay]);
+  assert.equal(rec.kernel.state(a as ExecutionId).protectedEffects.size, 1, 'protection must survive recovery');
+
+  const cp = rec.kernel.checkpoint(a as ExecutionId);
+  assert.equal(cp.protectedEffects.length, 1, 'and must be carried into checkpoints taken after recovery');
+
+  const b = rec.kernel.fork(cp.id, { dispositions: {} });
+  const gb = rec.kernel.issueGrant(b, { rights: ['pay'], limits: { invocations: 20, spawnDepth: 1 } });
+  await assert.rejects(
+    () => rec.kernel.invoke(b, 'payment.charge', { amount: 500 }, gb, { step: 'charge' }),
+    (e: unknown) => e instanceof ForkError,
+    'a fork taken after a restart must still refuse to replay the charge',
+  );
+  assert.equal(pay.world.size, 1, 'the world saw exactly one charge');
+  assertInvariants({ kernel: rec.kernel, storage }, 'post-restart fork protection');
+});
+
 test('multiple forks from one checkpoint are independent; forks nest', async () => {
   const { k, storage } = setup();
   const a = k.createExecution();

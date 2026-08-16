@@ -1021,20 +1021,53 @@ Stated here so the adversarial review attacks the right joints:
 
 1. **Grant budgets are the least-evidenced admission.** The rights half has four-way prior-art
    convergence; the budget half has near-none (research/notes/prior-art-negotiation-extension.md,
-   open question 6). Our atomicity argument (decrement must commit with the journal) is an
-   argument, not an observation.
-2. **Revocation vs. checkpoints.** Transitive revoke of a grant subtree conflicts with resumable
-   checkpoints that embed grant references — resume-under-re-resolution (petname-style) weakens
-   pure ocap; embedding weakens revocation (research/notes/prior-art-negotiation-extension.md,
-   open question 3). Doc 08 must decide; this document only exposes the conflict.
-3. **Closed algebra vs. extensible suspensions.** We close the state set and extend via typed
-   suspension payloads, deliberately rejecting A2A-style state-machine extensions. If a future
-   escalation genuinely needs a new *class* (neither interrupted nor terminal), the algebra
-   revs the kernel protocol version — the cost of closedness, accepted for portable
-   orchestrators.
+   open question 6). Our atomicity argument (reservation and settlement must commit with the
+   journal) is an argument, not an observation. *Status after amendment A2:* the mechanism is
+   now reserve-at-lease / settle-at-outcome / release-remainder with three distinct event kinds
+   (§2.7), which removes the parallel-sibling overdraft hole the original decrement-at-commit
+   model had — but the novelty exposure is unchanged, because no production system meters
+   attenuable authority this way for us to crib from.
+2. **Revocation vs. checkpoints — RESOLVED.** Transitive revoke of a grant subtree conflicted
+   with resumable checkpoints embedding grant references (research/notes/prior-art-negotiation-extension.md,
+   open question 3). Decision: **grant handles are re-resolved at fork/resume time** against
+   current grant state (petname semantics, ADR-013 as amended by A8), so a grant revoked after
+   the cut stays revoked in the child. This weakens pure ocap by making a reference's meaning
+   time-dependent, and we accept that trade because a checkpoint that resurrects revoked
+   authority is a security defect, while a checkpoint that fails loudly on revoked authority is
+   an operational inconvenience. Executable form: `Kernel.fork` grant re-resolution.
+3. **Closed algebra vs. extensible suspensions — one class has since been spent.** We close the
+   state set and extend via typed suspension payloads (now carrying an `origin` discriminator,
+   A10), deliberately rejecting A2A-style state-machine extensions. The cost of closedness was
+   paid exactly once and as designed: `uncertain` is a genuinely new class (neither interrupted
+   nor terminal), so admitting it rev'd the kernel protocol version rather than quietly
+   overloading `failed`. That is the mechanism working, not the mechanism failing — but it is
+   also evidence that the state set is not obviously final, and a second such rev before Wave-0
+   freeze would be a signal to reconsider closedness itself.
 4. **The cheap-path bet.** Rejecting the Message/Task duality assumes instantly-completed
    invocations can be made near-free. Unmeasured; the Mach corollary says this number decides
    whether the minimal kernel wins. The prototype (task 4) must produce it.
 5. **Kind/Capability boundary.** A Kind plus a watching controller can emulate invocation by
    reconciliation. We hold the line at "Kinds are not callable," but the redundancy is real and a
    reviewer may argue one of the two should absorb the other.
+
+---
+
+## Revision record (2026-08-16, phase 2)
+
+Amendment reconciliation against `research/DESIGN-SPINE.md` A1–A14 and the executable semantics
+in `prototypes/kernel-semantics/src/` (`kernel.ts`, `types.ts`, `invariants.ts`). Edits were
+surgical: superseded mechanism statements were corrected in place, and the reasoning that forced
+each change is retained and marked rather than deleted.
+
+| Amendment | Change |
+|---|---|
+| **A2** | §2.7 Grant: decrement-at-commit retired; replaced by the reserve-at-lease / settle-at-outcome / release-remainder table with the three distinct event kinds, remaining-budget formula, and the fresh-read rule for attenuation. §2.3 question 1 rewritten to reserve/settle. §2.7 question 2 and the prior-art implication updated. §7 tension 1 records what A2 fixed (parallel-sibling overdraft) and what it did not (novelty exposure). §2 object graph edge relabeled. |
+| **A3** | §2.2 Binding: new *Guarantee grades* paragraph — `enforced`/`observed`/`declared` per policy-relevant property, sealed and journaled, with the mediation-waterline scoping. Object graph node relabeled. |
+| **A4** | New §3.3 *The frozen facade*: the host/strategy-facing `KernelApi`/`HarnessCtx` verb list (bind, invoke, resume, cancel, attenuate, getGrant, charge, storeArtifact/readArtifact, scoped journal read, checkpoint, createCell, listCapabilities, Kind verbs, injected clock) frozen at Wave 0, and the capability-facing `InvokeCtx` as data-only with effect proposals as the sole channel to durable truth. ADR-010's scoped replaceability claim noted. |
+| **A8** | §2.7 Grant: authority is kernel-minted **handle identity**; id strings confer nothing; journal grant references are non-resolvable; the falsified `KERNEL_MINT`-symbol design recorded; revocation/expiry re-checked at time of use. §2.2 Binding: handle-shaped grant reference. Prior-art interpretation extended to note all four ocap systems make authority a kernel object. |
+| **A9(ii)** | No occurrence in this document (the "elevated to FACT" phrasing lives in doc 06 §6.5); no edit required. |
+| **A10** | §2.3: suspension `origin` discriminator (provider/policy/kernel) with distinct resume semantics; cancellation *requests* journaled separately from honored transitions. §2.5 Artifact: label/kind field on the metadata record, and `artifact.produced` journaled per producing invocation even when the CAS dedups the bytes. §2.6 Cell: child invocations run in fresh cells, spawn semantics normative. §2.8: tiered/ladder-free checkpoint fields. §3.2 Scheduler: fresh child cells + journaled cancel requests. |
+| **A11** | §2.3, §2.5, §2.8: the bounded reliability dedup window (TTL ≥ retry horizon, correctness device) and the content-keyed replay cache (indefinite, policy-governed, optimization) are named as two mechanisms with two contracts wherever the old text said "dedup". |
+| **A13** | §6 vocabulary row 21: negotiation gates eligibility; selection is a separate userland routing strategy, cross-referenced to doc 06 §4.4. |
+| **A14** | No catalog/badge claims appear in this document; scoping is applied in doc 06 §3.4. |
+| **Executable semantics** | §2.3: `uncertain` state added as a third (unresolved) class with its four dispositions and the "probe=unknown stays uncertain" rule; state diagram updated; question 6 and §7 tension 3 record that admitting the class rev'd the protocol version. §2.8 Checkpoint: full record shape (`cutSeq`, `stateSnapshot`, `pending` with effect class and lease epoch, `dedupWindow`, `protectedEffects`, `grants`, `definitionHash`, `protocolVersion`) plus the normative resume-continues / fork-branches distinction, mandatory fork dispositions, and fork-time grant re-resolution. §7 tension 2 marked RESOLVED by that re-resolution rule. |

@@ -1163,14 +1163,26 @@ export class Kernel {
         k.applyToProjection(exec, ev);
         exec.seq = ev.seq;
         exec.lastHash = ev.integrity.self;
-        // Rebuild effect identity from committed truth.
+        // Rebuild effect identity from committed truth — including the REAL effect
+        // class and the protected-effect set. Recovering these with a placeholder
+        // class silently disarms the fork protections of doc 17 §8.2: after a restart
+        // an inherited irreversible effect would again be absorbed as a cache hit.
+        // (Falsified by an attack script during review #2 — see docs/20 F-6.)
         const key = ev.payload['effectKey'] as EffectKey | undefined;
         if (key !== undefined) {
+          const known = ev.invocationId !== undefined ? exec.invocations.get(ev.invocationId) : undefined;
+          const effectClass: EffectClass =
+            (ev.payload['effectClass'] as EffectClass | undefined) ?? known?.effectClass ?? 'pure';
+          const landed = ev.payload['landedExternal'] === true;
           if (ev.kind === 'invocation.completed') {
-            exec.effectIndex.set(key, { invocationId: ev.invocationId!, effectClass: 'pure', landed: true, outcome: 'completed' });
+            exec.effectIndex.set(key, { invocationId: ev.invocationId!, effectClass, landed: true, outcome: 'completed' });
             exec.dedupWindow.add(key);
+            if (effectClass === 'external-irreversible') exec.protectedEffects.add(key);
           } else if (ev.kind === 'invocation.failed' || ev.kind === 'invocation.canceled') {
-            exec.effectIndex.set(key, { invocationId: ev.invocationId!, effectClass: 'pure', landed: ev.payload['landedExternal'] === true, outcome: 'failed' });
+            exec.effectIndex.set(key, { invocationId: ev.invocationId!, effectClass, landed, outcome: 'failed' });
+            // A landed irreversible effect stays protected even when its invocation
+            // failed afterwards: the world saw it.
+            if (landed && effectClass === 'external-irreversible') exec.protectedEffects.add(key);
           }
         }
       }
