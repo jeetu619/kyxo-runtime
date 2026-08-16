@@ -7,7 +7,7 @@
  *   B3  landed external effects commit at yield, not at settlement;
  *   B4  all derived state comes from s1-fold; the kernel keeps no private index;
  *   B8  payloadHash in the envelope, chain covers the hash;
- *   B9a protection is ancestor-scoped over the family, not a checkpoint snapshot list.
+ *   B9a protection is a family-wide ledger over landed effects, not a snapshot list.
  *
  * CONCURRENCY CONTRACT (see docs/25 §Single writer): one writer per family. Admission —
  * claim check plus claim commit — is synchronous and contains no await, so no two
@@ -19,7 +19,7 @@ import {
   type ClaimId, type FamilyId, type FamilyProjection, type S1Event, type S1EventKind,
   type Units, emptyFamily, requiresExclusiveClaim, S1_PROTOCOL_VERSION,
 } from './s1-types.ts';
-import { chainBlocked, foldEvent, protectionFor, remaining } from './s1-fold.ts';
+import { chainBlocked, foldEvent, hasLanded, protectionFor, remaining } from './s1-fold.ts';
 import type {
   CapabilityProvider, EffectClass, EffectKey, EffectProposal, ExecutionId,
   GrantId, InvocationId, InvocationState, PolicyStage, UncertaintyDisposition,
@@ -302,8 +302,8 @@ export class S1Kernel {
     // Two guards keep that true rather than merely intended: the no-await source guard
     // (tests/s1-concurrency) and the re-entrancy flag below.
     const decision = this.enterAdmission((): AdmissionDecision => {
-      // Ancestor-scoped protection (B9a): did MY lineage already land this effect?
-      const prot = protectionFor(fam, execId, effectKey);
+      // Lineage-tree protection (B9a): has this effect already landed in this family?
+      const prot = protectionFor(fam, effectKey);
       if (prot.protected && exclusive) {
         this.commit(familyId, execId, [{
           kind: 'effect.claim.denied', invocationId, grantId: grant.id,
@@ -570,6 +570,18 @@ export class S1Kernel {
     const fam = this.family(familyId);
     const inv = fam.executions.get(execId)?.invocations.get(invocationId);
     if (inv === undefined || inv.state !== 'uncertain') throw new S1Error(`invocation ${invocationId} is not uncertain`);
+    // Durable world truth constrains which dispositions are even available. If a landing
+    // is recorded, "it failed" is not an outcome anyone may assert — the disagreement is
+    // about the OUTCOME, and the record is about the WORLD. Compensation is the route for
+    // undoing a landed effect; declaring it never happened is not.
+    // (docs/20 F-13. The fold refuses this independently, because the fold is the
+    // authority and must be correct even against a buggy or hostile writer.)
+    if (d.kind === 'abandon-failed' && hasLanded(fam, inv.effectKey)) {
+      throw new S1Error(
+        `cannot abandon ${invocationId} as failed: effect ${inv.effectKey} has a durable landing`,
+      );
+    }
+
     let resolved: InvocationState = 'uncertain';
     let landedNow = false;
     const detail: Record<string, unknown> = { disposition: d.kind };
@@ -704,7 +716,7 @@ export class S1Kernel {
   executionIds(): ExecutionId[] { return [...this.familyOf.keys()]; }
   stagedCount(): number { return this.staged.size; }
   isProtected(execId: ExecutionId, key: EffectKey): boolean {
-    return protectionFor(this.familyFor(execId), execId, key).protected;
+    return protectionFor(this.familyFor(execId), key).protected;
   }
   remainingFor(execId: ExecutionId, grantId: GrantId, unit: string): number {
     return remaining(this.familyFor(execId), grantId, unit);

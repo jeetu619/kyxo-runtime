@@ -117,12 +117,13 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
     case 'effect.released': {
       const key = p['effectKey'] as EffectKey;
       const c = fam.claims.get(key);
-      // A released claim frees the key ONLY if nothing landed under it.
-      if (c !== undefined && c.state !== 'landed' && c.state !== 'settled') {
-        fam.claims.delete(key);
-      } else if (c !== undefined) {
-        fam.claims.set(key, { ...c, state: 'settled' });
-      }
+      // A released claim frees the key ONLY if nothing landed under it. The authority for
+      // that is the landed LOG, not the claim's own state field: a claim can pass through
+      // `uncertain` after a landing, and asking the claim would then free a key the world
+      // has already seen.
+      if (c === undefined) break;
+      if (hasLanded(fam, key)) fam.claims.set(key, { ...c, state: 'settled' });
+      else fam.claims.delete(key);
       break;
     }
 
@@ -205,8 +206,14 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
       if (key !== undefined) {
         const c = fam.claims.get(key);
         if (c !== undefined) {
-          const next: ClaimState = resolved === 'completed' ? 'settled'
-            : p['landed'] === true ? 'settled'
+          // A durable `effect.landed` record outranks any later assertion about the
+          // OUTCOME. An operator may resolve unknown-to-failed; no operator can un-charge
+          // a card the journal says was charged, so the key is never freed here.
+          // (docs/20 F-13: without this, `abandon-failed` deleted the claim and a fork
+          // charged the card a second time. Reproduced by tests/s1-lineage L3.)
+          const landedAlready = hasLanded(fam, key) || p['landed'] === true;
+          const next: ClaimState = landedAlready ? 'settled'
+            : resolved === 'completed' ? 'settled'
             : resolved === 'uncertain' ? 'uncertain' : 'released';
           if (next === 'released') fam.claims.delete(key);
           else fam.claims.set(key, { ...c, state: next });
@@ -355,41 +362,46 @@ export function digest(fam: FamilyProjection): string {
 }
 
 // ---------------------------------------------------------------------------
-// Ancestor-scoped protection (B9a) — a query over folded state, not a second store
+// Lineage-tree protection (B9a) — a query over folded state, not a second store
 // ---------------------------------------------------------------------------
 
 /**
- * Is `effectKey` protected for `executionId`?
+ * Is `effectKey` protected anywhere in this family?
  *
- * An execution is bound by effects landed in its own lineage: its own, plus any landed
- * in an ancestor at or before the sequence at which this lineage branched away.
+ * SCOPE: the whole lineage tree, regardless of topology or of which cut a child came
+ * from — B9a's ratified resolution, taken literally.
  *
- * It is NOT bound by a sibling's effects. Siblings are divergent world-lines, and
- * treating A's charge as B's would be as wrong as missing a replay.
+ * An earlier draft of this wave scoped protection to the ancestor PATH, on the theory
+ * that siblings are divergent world-lines and A's charge should not bind B. Tests L1–L3
+ * falsified it (docs/20 F-12): the external world is not forked. A lineage tree is
+ * bookkeeping; a charged card is a fact. Under path scoping a fork taken from before the
+ * charge reported the effect as unprotected, and the only thing still refusing it was the
+ * family-wide claim table — two mechanisms answering one question differently, with the
+ * safer one winning by luck. L3 then removed the luck and produced a second real charge.
+ *
+ * Note the deliberate NON-parameter: no execution id. Protection is a property of the
+ * family and the effect, and a signature that accepted an execution would imply the
+ * answer could depend on it.
+ *
+ * Only classes that cannot be safely repeated are protected; an idempotent effect is
+ * repeatable by declaration, so binding it here would be a lie the reference model and
+ * invariant checker would both inherit.
  */
 export function protectionFor(
   fam: FamilyProjection,
-  executionId: ExecutionId,
   effectKey: EffectKey,
 ): { protected: boolean; by?: { executionId: ExecutionId; seq: number } } {
-  // Walk this execution's ancestry, carrying the visibility horizon of each ancestor.
-  let cursor: ExecutionId | undefined = executionId;
-  let horizon = Number.POSITIVE_INFINITY;
-  const guard = new Set<ExecutionId>();
-
-  while (cursor !== undefined && !guard.has(cursor)) {
-    guard.add(cursor);
-    for (const l of fam.landed) {
-      if (l.effectKey !== effectKey) continue;
-      if (l.executionId !== cursor) continue;
-      if (l.seq <= horizon) return { protected: true, by: { executionId: l.executionId, seq: l.seq } };
-    }
-    const node: LineageNode | undefined = fam.lineage.get(cursor);
-    if (node?.parent === undefined) break;
-    horizon = node.parent.cutSeq;
-    cursor = node.parent.executionId;
+  for (const l of fam.landed) {
+    if (l.effectKey !== effectKey) continue;
+    if (!requiresExclusiveClaim(l.effectClass)) continue;
+    return { protected: true, by: { executionId: l.executionId, seq: l.seq } };
   }
   return { protected: false };
+}
+
+/** Has any exclusive effect under this key landed? The durable world-truth question. */
+export function hasLanded(fam: FamilyProjection, effectKey: EffectKey): boolean {
+  return fam.landed.some((l) => l.effectKey === effectKey);
 }
 
 /** Remaining capacity for a unit, family-wide, across the whole grant chain. */

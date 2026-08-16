@@ -17,16 +17,22 @@
  *  5. B8 — Every event carries `payloadHash`; the chain covers the hash, not the payload,
  *     so redaction is possible without breaking integrity.
  *
- * THE SCOPE ASYMMETRY (the load-bearing decision of this wave)
+ * SCOPE: BOTH LEDGERS ARE FAMILY-SCOPED
  *
- *   Protected effects are ANCESTOR-scoped: a lineage is bound by what it and its
- *   ancestors did to the world, never by what a sibling fork did. Siblings are divergent
- *   world-lines; A charging a card does not mean B already charged it.
+ *   Protected effects are FAMILY-scoped: an exclusive effect landed anywhere in the
+ *   lineage tree binds the whole tree, regardless of topology or of which cut a child
+ *   came from. The external world is not forked — a lineage tree is bookkeeping, a
+ *   charged card is a fact.
  *
  *   Grant budgets are FAMILY-scoped: money spent is spent. Every execution descending
  *   from one grant draws on one ledger, so no fork can mint spending power.
  *
  * Both are folds over committed records, so both survive restart (I25).
+ *
+ * SUPERSEDED: this file previously specified an ancestor-PATH scope for protection, on
+ * the theory that siblings are divergent world-lines, and called that asymmetry the
+ * load-bearing decision of the wave. Tests s1-lineage L1–L3 falsified it and produced a
+ * second real charge; see docs/20 F-12. The asymmetry is gone: one scope, one rule.
  */
 
 import type {
@@ -80,7 +86,7 @@ export interface ClaimRecord {
   readonly state: ClaimState;
 }
 
-/** A landed effect, recorded where and when it happened, for ancestor-scoped protection. */
+/** A landed effect, recorded where and when it happened. The protected-effect ledger. */
 export interface LandedEffect {
   readonly effectKey: EffectKey;
   readonly effectClass: EffectClass;
@@ -206,7 +212,7 @@ export interface FamilyProjection {
   lineage: Map<ExecutionId, LineageNode>;
   /** Active + terminal claims, keyed by effect identity. */
   claims: Map<EffectKey, ClaimRecord>;
-  /** Every landed effect with where it landed — ancestor-scoped protection reads this. */
+  /** Every landed effect with where it landed — family-scoped protection reads this. */
   landed: LandedEffect[];
   /** One ledger per grant id for the whole family (B2). */
   grants: Map<GrantId, GrantLedgerEntry>;
