@@ -32,6 +32,8 @@ export class ClaimDeniedError extends S1Error {}
 export class AuthorizationError extends S1Error {}
 export class BudgetError extends S1Error {}
 export class ForkError extends S1Error {}
+/** Raised when the journal is corrupt in a way recovery must not paper over (B6). */
+export class JournalIntegrityError extends S1Error {}
 
 interface Draft {
   readonly kind: S1EventKind;
@@ -795,10 +797,29 @@ export class S1Kernel {
   // Recovery — same fold, no bespoke reconstruction
   // -------------------------------------------------------------------------
 
-  static recover(storage: Storage, providers: readonly CapabilityProvider[] = []): { kernel: S1Kernel; uncertain: InvocationId[] } {
+  static recover(
+    storage: Storage,
+    providers: readonly CapabilityProvider[] = [],
+    opts: { quarantine?: boolean } = {},
+  ): { kernel: S1Kernel; uncertain: InvocationId[] } {
     const k = new S1Kernel(storage);
     for (const p of providers) k.register(p);
-    const { records } = storage.readJournal(verifyS1Record);
+    const { records, corruptionInMiddle } = storage.readJournal(verifyS1Record);
+
+    // B6: fail closed on mid-journal corruption. A trailing bad record is an interrupted
+    // write and discarding it is correct; a bad record with valid records after it is
+    // corruption, and folding past it silently deletes history from the middle of the log
+    // while everything downstream still looks perfectly consistent. Recovering from that
+    // quietly is worse than not recovering, because nobody finds out.
+    //
+    // `quarantine` is the explicit operator override: recover what is readable, having
+    // been told what is being skipped. It is a decision, never a default.
+    if (corruptionInMiddle && opts.quarantine !== true) {
+      throw new JournalIntegrityError(
+        'journal has a non-trailing invalid record; refusing to fold past it. ' +
+        'Pass { quarantine: true } to recover the readable prefix deliberately.',
+      );
+    }
 
     for (const rec of records) {
       const r = rec as { familyId: FamilyId; events: S1Event[] };

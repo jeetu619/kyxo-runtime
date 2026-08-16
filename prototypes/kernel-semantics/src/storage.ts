@@ -157,24 +157,44 @@ export class Storage {
    * record verified as torn and recovery silently saw an empty journal — a
    * catastrophic-yet-quiet failure. Recorded as F-11.)
    */
-  readJournal(verify: (record: unknown) => boolean = verifyEventsChecksum): { records: unknown[]; discarded: number } {
+  readJournal(verify: (record: unknown) => boolean = verifyEventsChecksum): {
+    records: unknown[];
+    discarded: number;
+    /**
+     * True when a record failed verification and a VALID record follows it.
+     *
+     * A trailing bad record is an interrupted write — expected, and discarding it is
+     * correct. A bad record in the middle is corruption, and skipping past it silently
+     * deletes history from the middle of the log while everything downstream still looks
+     * consistent. The two must never be conflated, so this reports the difference and the
+     * caller decides (B6). See `S1Kernel.recover`, which fails closed on it.
+     */
+    corruptionInMiddle: boolean;
+  } {
     const out: unknown[] = [];
     let discarded = 0;
+    let sawBad = false;
+    let corruptionInMiddle = false;
+
     for (const line of this.journal) {
       let rec: unknown;
+      let ok = true;
       try {
         rec = JSON.parse(line) as unknown;
       } catch {
+        ok = false;
+      }
+      if (ok && !verify(rec)) ok = false;
+
+      if (!ok) {
         discarded += 1;
+        sawBad = true;
         continue;
       }
-      if (!verify(rec)) {
-        discarded += 1;
-        continue;
-      }
+      if (sawBad) corruptionInMiddle = true;
       out.push(rec);
     }
-    return { records: out, discarded };
+    return { records: out, discarded, corruptionInMiddle };
   }
 
   stats(): StorageStats {

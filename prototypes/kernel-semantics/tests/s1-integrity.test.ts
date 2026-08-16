@@ -234,6 +234,48 @@ test('B8/I7: a record that fails its checksum is never folded', async () => {
   assert.equal(discarded, strict, 'S1 records do not verify under the phase-2 recipe');
 });
 
+test('B6/I7b: mid-journal corruption fails closed rather than silently truncating', async () => {
+  // A trailing bad record is an interrupted write; discarding it is right. A bad record
+  // with valid records AFTER it is corruption, and folding past it deletes history from
+  // the middle of the log while everything downstream still looks consistent. Recovering
+  // quietly from that is worse than not recovering, because nobody finds out.
+  const f = setup();
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'a' }, f.grant, { step: 'a' });
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'b' }, f.grant, { step: 'b' });
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'c' }, f.grant, { step: 'c' });
+
+  // Corrupt a record in the middle by rewriting the raw journal line.
+  const raw = (f.storage as unknown as { journal: string[] }).journal;
+  const middle = Math.floor(raw.length / 2);
+  raw[middle] = raw[middle]!.replace(/"checksum":"[^"]+"/, '"checksum":"corrupted"');
+
+  const read = f.storage.readJournal(verifyS1Record);
+  assert.equal(read.corruptionInMiddle, true, 'the break must be reported as non-trailing');
+
+  assert.throws(
+    () => S1Kernel.recover(f.storage, [noteTaker()]),
+    /non-trailing invalid record/,
+    'recovery must refuse rather than fold past a mid-journal break',
+  );
+
+  // The operator override is a decision, not a default.
+  const { kernel } = S1Kernel.recover(f.storage, [noteTaker()], { quarantine: true });
+  assert.ok(kernel.familyIds().length >= 1, 'a deliberate quarantine still recovers the readable records');
+});
+
+test('B6/I7c: a TRAILING bad record is still just discarded', async () => {
+  const f = setup();
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'a' }, f.grant, { step: 'a' });
+  const raw = (f.storage as unknown as { journal: string[] }).journal;
+  raw[raw.length - 1] = raw[raw.length - 1]!.replace(/"checksum":"[^"]+"/, '"checksum":"torn"');
+
+  const read = f.storage.readJournal(verifyS1Record);
+  assert.equal(read.discarded, 1);
+  assert.equal(read.corruptionInMiddle, false, 'an interrupted final write is not corruption');
+  const { kernel } = S1Kernel.recover(f.storage, [noteTaker()]);
+  assert.ok(kernel.familyIds().length >= 1, 'recovery proceeds normally');
+});
+
 // ---------------------------------------------------------------------------
 // I8–I9 — versioning and forward compatibility
 // ---------------------------------------------------------------------------
@@ -270,6 +312,36 @@ test('B8/I8: an unknown event kind advances the cursor without changing semantic
   assert.equal(stripped.landed.length, before.landed.length);
   assert.equal(stripped.grants.size, before.grants.size);
   assert.notEqual(digest(withFuture), baseline, 'the cursor did move, so the digest must differ');
+});
+
+test('B8/I10: golden corpus — a fixed journal folds to a fixed shape', async () => {
+  // A conformance anchor. The fold's OUTPUT for a known input is pinned here, so an
+  // accidental change to record semantics shows up as a failing test rather than as a
+  // silently different interpretation of journals already on disk.
+  //
+  // Deliberately pinned as a structural summary rather than a hash of the whole
+  // projection: a hash would break on every cosmetic field addition and would be
+  // retrofitted rather than examined. These are the facts a reader must still derive.
+  const f = setup();
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'one' }, f.grant, { step: 'a' });
+  await f.k.invoke(f.exec, 'notes.write', { secret: 'two' }, f.grant, { step: 'b' });
+
+  const fam = foldAll(f.familyId, f.k.events(f.familyId));
+  const exec = fam.executions.get(f.exec)!;
+
+  assert.equal(fam.executions.size, 1);
+  assert.equal(exec.invocations.size, 2, 'two invocations');
+  assert.equal(exec.cell.get('note'), 'two', 'last write wins in the cell');
+  assert.equal(fam.landed.length, 0, 'a local capability lands nothing external');
+  assert.equal(fam.grants.size, 1);
+  assert.equal(fam.grants.get(f.grant.id)!.settled['invocations'], 2, 'two invocations settled');
+  assert.equal(fam.grants.get(f.grant.id)!.reserved['invocations'], 0, 'nothing still reserved');
+  assert.equal(fam.claims.size, 0, 'non-exclusive claims are released once settled');
+  assert.equal(fam.outcomes.size, 2, 'both terminal outcomes are recorded for dedup');
+
+  // Sequence density is part of the format, not an accident of this run.
+  const seqs = f.k.events(f.familyId).filter((e) => e.executionId === f.exec).map((e) => e.seq);
+  assert.deepEqual(seqs, seqs.map((_, i) => i + 1), 'seq is dense and 1-based per execution');
 });
 
 test('B8/I9: the protocol version is stamped on every event and is the format\'s identity', async () => {
