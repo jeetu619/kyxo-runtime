@@ -188,11 +188,24 @@ export interface ExecutionProjection {
   invocations: Map<InvocationId, {
     id: InvocationId;
     capabilityId: string;
+    /**
+     * The original request. Stored so a suspended invocation can be re-entered from the
+     * journal alone: re-entry that depends on process memory is re-entry that stops
+     * working at the first restart (I25).
+     */
+    request: unknown;
     effectKey: EffectKey;
     effectClass: EffectClass;
     grantId: GrantId;
     state: InvocationState;
     requiresEvidence: boolean;
+    /**
+     * What the kernel is holding for this invocation, in every unit. Folded from
+     * `grant.reserved` rather than kept in memory, because a resume or a restart has to
+     * release exactly what admission held — and a reservation that only lives in the
+     * process is one that leaks on every crash.
+     */
+    reservation: Units;
     suspension?: { reason: string; payload: unknown } | undefined;
   }>;
   cell: Map<string, unknown>;

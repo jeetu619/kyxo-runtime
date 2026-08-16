@@ -142,11 +142,13 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
       exec.invocations.set(ev.invocationId!, {
         id: ev.invocationId!,
         capabilityId: p['capabilityId'] as string,
+        request: p['request'],
         effectKey: p['effectKey'] as EffectKey,
         effectClass: p['effectClass'] as EffectClass,
         grantId: ev.grantId!,
         state: 'admitted',
         requiresEvidence: p['requiresEvidence'] === true,
+        reservation: {},
       });
       break;
 
@@ -270,6 +272,11 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
 
     case 'grant.reserved':
       moveLedger(fam, ev.grantId!, p['units'] as Units, 'reserved', +1);
+      // Also record it against the invocation, so resume and recovery can release
+      // exactly what admission held without consulting process memory.
+      if (ev.invocationId !== undefined) {
+        patch(exec, ev.invocationId, { reservation: (p['units'] as Units) ?? {} });
+      }
       break;
 
     case 'grant.settled':
@@ -296,7 +303,11 @@ export function foldEvent(fam: FamilyProjection, ev: S1Event): void {
 function patch(
   exec: ExecutionProjection,
   id: InvocationId,
-  delta: Partial<{ state: InvocationState; suspension: { reason: string; payload: unknown } | undefined }>,
+  delta: Partial<{
+    state: InvocationState;
+    reservation: Units;
+    suspension: { reason: string; payload: unknown } | undefined;
+  }>,
 ): void {
   const cur = exec.invocations.get(id);
   if (cur !== undefined) exec.invocations.set(id, { ...cur, ...delta });

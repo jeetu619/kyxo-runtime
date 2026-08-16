@@ -389,7 +389,7 @@ export class S1Kernel {
       const claimId = this.id('claim') as ClaimId;
       this.commit(familyId, execId, [
         { kind: 'invocation.admitted', invocationId, grantId: grant.id,
-          payload: { capabilityId, effectKey, effectClass, requiresEvidence: opts.requiresEvidence === true } },
+          payload: { capabilityId, request, effectKey, effectClass, requiresEvidence: opts.requiresEvidence === true } },
         { kind: 'effect.claimed', invocationId, grantId: grant.id,
           payload: { claimId, effectKey, effectClass, exclusive } },
         { kind: 'grant.reserved', invocationId, grantId: grant.id, payload: { units: res } },
@@ -402,9 +402,61 @@ export class S1Kernel {
     if (!decision.admitted) return decision.outcome;
     const reservation = decision.reservation;
 
+    return this.run({
+      familyId, execId, invocationId, provider, grant, request, effectKey, effectClass,
+      reservation, depth, attempt: 1,
+    });
+  }
+
+  /**
+   * Re-enter a suspended invocation.
+   *
+   * Suspension without resumption is a one-way door: the claim and the reservation stay
+   * held forever, so the effect key is permanently occupied and the budget permanently
+   * spent. Resume closes it.
+   *
+   * What resume must NOT do: re-admit. The claim is already held by this invocation and
+   * the budget is already reserved for it, so re-running admission would either be denied
+   * by its own claim or double-charge the ledger. It picks up the existing lease instead,
+   * reading the reservation from the fold (not from memory, which a restart would have
+   * lost).
+   */
+  async resume(execId: ExecutionId, invocationId: InvocationId, payload: unknown): Promise<S1Outcome> {
+    const familyId = this.mustFamilyId(execId);
+    const fam = this.family(familyId);
+    const inv = fam.executions.get(execId)?.invocations.get(invocationId);
+    if (inv === undefined) throw new S1Error(`unknown invocation ${invocationId}`);
+    if (inv.state !== 'suspended') throw new S1Error(`invocation ${invocationId} is not suspended (${inv.state})`);
+    const provider = this.caps.get(inv.capabilityId);
+    if (provider === undefined) throw new S1Error(`unknown capability ${inv.capabilityId}`);
+
+    this.commit(familyId, execId, [{
+      kind: 'invocation.resumed', invocationId, grantId: inv.grantId,
+      payload: { effectKey: inv.effectKey, payload },
+    }]);
+
+    return this.run({
+      familyId, execId, invocationId, provider,
+      grant: this.mint(inv.grantId),            // kernel-minted, so authority is unchanged
+      request: inv.request,
+      effectKey: inv.effectKey, effectClass: inv.effectClass,
+      reservation: inv.reservation, depth: 0, attempt: 2,
+      resume: { payload },
+    });
+  }
+
+  /** The half of an invocation that runs the capability. Shared by invoke and resume. */
+  private async run(a: {
+    familyId: FamilyId; execId: ExecutionId; invocationId: InvocationId;
+    provider: CapabilityProvider; grant: GrantHandle; request: unknown;
+    effectKey: EffectKey; effectClass: EffectClass; reservation: Units;
+    depth: number; attempt: number; resume?: { payload: unknown };
+  }): Promise<S1Outcome> {
+    const { familyId, execId, invocationId, provider, grant, effectKey, effectClass, reservation } = a;
     this.staged.set(invocationId, []);
     const ctx = {
-      invocationId, executionId: execId, now: this.tick(), attempt: 1, request,
+      invocationId, executionId: execId, now: this.tick(), attempt: a.attempt, request: a.request,
+      ...(a.resume === undefined ? {} : { resume: a.resume }),
       cancelled: () => this.family(familyId).executions.get(execId)?.cancelRequested.has(invocationId) === true,
     };
 
@@ -417,15 +469,25 @@ export class S1Kernel {
         if (proposal.type === 'external' && proposal.landed) {
           // B3: world truth commits AT YIELD. A later suspension, crash or failure
           // cannot erase it, because it is no longer a candidate.
-          this.commit(familyId, execId, [{
-            kind: 'effect.landed', invocationId, grantId: grant.id,
-            payload: { effectKey, effectClass, descriptor: proposal.descriptor },
-          }]);
+          //
+          // A resumed capability re-runs its body, so it may re-yield a landing that is
+          // already recorded. The kernel records that as a duplicate rather than a second
+          // landing, which keeps the ledger coherent. It CANNOT undo a real second call to
+          // the world — a capability re-entered after suspension is contractually required
+          // to consult `ctx.resume` and skip work it already did. That obligation lives in
+          // the capability contract, and tests/s1-effects E7 pins the containment.
+          this.commit(familyId, execId, [
+            hasLanded(this.family(familyId), effectKey)
+              ? { kind: 'effect.deduplicated' as const, invocationId, grantId: grant.id,
+                  payload: { effectKey, reason: 're-yielded-after-resume', descriptor: proposal.descriptor } }
+              : { kind: 'effect.landed' as const, invocationId, grantId: grant.id,
+                  payload: { effectKey, effectClass, descriptor: proposal.descriptor } },
+          ]);
           next = await gen.next(undefined);
           continue;
         }
         if (proposal.type === 'delegate') {
-          const outcome = await this.delegate(familyId, execId, grant, proposal, depth, invocationId);
+          const outcome = await this.delegate(familyId, execId, grant, proposal, a.depth, invocationId);
           next = await gen.next(outcome);
           continue;
         }
