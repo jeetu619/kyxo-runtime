@@ -191,6 +191,21 @@ export class Storage {
    * (Found while writing the S1 race suite: with the recipe hard-coded here, every S1
    * record verified as torn and recovery silently saw an empty journal — a
    * catastrophic-yet-quiet failure. Recorded as F-11.)
+   *
+   * WHERE "TORN" IS DECIDED, AND IT IS DECIDED HERE, ONCE.
+   *
+   * A torn record is a line whose BYTES ARE INCOMPLETE — the process died mid-append, so
+   * the tail never landed. `tick` produces exactly that, and a truncated JSON object does
+   * not parse. So the `JSON.parse` below IS the torn-write boundary: what fails it was
+   * never a whole record and discarding it loses nothing that was committed.
+   *
+   * Everything past that point PARSED, which means a complete record reached the disk. The
+   * verifier may then answer three ways and only two of them are the disk's business:
+   * `false` means invalid (trailing ⇒ interrupted write, mid-journal ⇒ reported as
+   * corruption), and a THROW means refuse the journal outright. A verifier throw is
+   * deliberately NOT caught here — a format that can tell "damaged" from "altered" must be
+   * able to say so, and swallowing it into `discarded` is precisely how a record with its
+   * interpretation instructions removed used to vanish (S1b-1 review 7).
    */
   readJournal(verify: (record: unknown) => boolean = verifyEventsChecksum): {
     records: unknown[];
@@ -217,8 +232,10 @@ export class Storage {
       try {
         rec = JSON.parse(line) as unknown;
       } catch {
-        ok = false;
+        ok = false;                      // TORN: incomplete bytes, never a whole record
       }
+      // Parsed: a complete record. The format decides what it is, and may refuse the
+      // journal by throwing rather than merely calling the record invalid.
       if (ok && !verify(rec)) ok = false;
 
       if (!ok) {

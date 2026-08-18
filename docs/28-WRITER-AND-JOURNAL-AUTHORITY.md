@@ -44,6 +44,8 @@ backlog item.
 | record deletion, reordering, replay | chain + seq + family/writer/epoch binding in the MAC preimage |
 | stale writer after takeover | epoch fencing, checked per append |
 | **malicious storage** | per-record MAC — storage holds no writer key |
+| **storage editing the reader's instructions** | the MAC covers `requiredFeatures` and `mustUnderstand` too (A-2). Disarming the fail-closed layer requires a key |
+| a middlebox silently dropping an envelope field | the unkeyed checksum covers the same envelope (A-5), and an absent field is malformed rather than lenient (A-6) |
 | capability / consumer code | no key or signer reaches userland |
 
 **Out of scope, stated plainly**
@@ -88,16 +90,68 @@ another process appending — no in-process mechanism can — so:
 
 **A-1** Every record MUST carry a `mac` and the `keyId` that produced it.
 
-**A-2** The MAC preimage MUST bind `{commitToken, executionId, familyId, writerId, epoch,
-formatVersion, events}`. That binding is what makes a **genuine** record stolen from another
+**A-2** The MAC preimage MUST bind the **whole record envelope minus its seals**:
+`{commitToken, executionId, familyId, writerId, epoch, formatVersion, requiredFeatures,
+mustUnderstand, events}`. That binding is what makes a **genuine** record stolen from another
 execution, another fork, or an earlier epoch fail — replay of a valid record was the attack
-S1's checksum could not see, because it covered only the record's own contents.
+S1's checksum could not see, because it covered only the record's own contents — and it is
+what puts the reader's **interpretation instructions** beyond the reach of anyone without a
+key.
+
+> **Amended by S1b-1.** A-2 previously bound `{commitToken, executionId, familyId, writerId,
+> epoch, formatVersion, events}`, leaving `requiredFeatures` and `mustUnderstand` outside the
+> MAC — and outside the checksum, which covered less again. Those two fields are not
+> decoration. `mustUnderstand` is the whole of PART 6: it is the writer telling a future
+> reader *"if you do not understand this kind, stop."* Storage holding **no key at all** could
+> set `mustUnderstand: []`, recompute the unkeyed checksum, leave the MAC untouched, and
+> every check still passed. The old reader then met a renamed `effect.landed`, was told by
+> someone who was not the writer that it was ignorable, skipped the landing, and the card was
+> charged a second time with every invariant green — **F-38 reopened through the MAC gap**
+> (docs/30, S1b-1).
+>
+> The replacement rule does not need re-litigating per field: **the seals cover the whole
+> envelope minus the seals themselves.** A field is authenticated by being in the envelope,
+> not by someone remembering to add it to two hand-written recipes — which is how three
+> fields went missing from one of them.
+>
+> `keyId` is deliberately outside. It selects a key rather than asserting anything, and a
+> swapped `keyId` can only make verification fail. Binding a key to a *writer* is a separate
+> and still-open blocker (doc 31, Blocker 3); it needs a policy, not a preimage field.
+>
+> Changing what the seals cover changed the recipe, so the **format identifier moved with
+> it**: `2026-08-18` → `2026-08-19`. See doc 29 §3.2.
 
 **A-3** Verification MUST be constant-time. A verifier that leaks position through timing is
 one an attacker can grind against.
 
 **A-4** No signing authority may reach a capability or a consumer. A capability that could
 sign could forge history.
+
+**A-5** The checksum and the MAC MUST cover the same envelope under **distinct domains**.
+Each preimage carries a domain tag — `kyxo/s1b/commit-record/checksum/1` and
+`kyxo/s1b/commit-record/mac/1` — **inside** the canonical structure, not concatenated in
+front of it: a prefix on a string is a boundary an attacker can move, a key in a sorted
+object is not.
+
+Two reasons, and they are separate:
+
+- **Separation.** Without a tag, a value computed as a checksum preimage is also a valid MAC
+  preimage, so any future mechanism that signs a canonical envelope with the journal key —
+  the per-family tip Blocker 2 needs, a checkpoint seal, a revocation record — would mint
+  signatures interchangeable with commit-record MACs. One field closes the class permanently.
+- **Coverage.** The checksum is unkeyed and therefore not a security boundary; anyone with
+  disk access recomputes it. What it stops is every change that was not deliberate — a torn
+  write, a truncating serializer, a proxy that drops fields it does not recognise.
+  `mustUnderstand` is exactly the kind of field such a middlebox drops, and dropping it
+  silently disarms the reader, so it belongs under this seal too and not only under the MAC,
+  which a keyless journal does not have at all.
+
+**A-6** A record missing an envelope field MUST be refused as **malformed**, not read
+leniently, and a verifier MUST NOT supply a default on the writer's behalf. Canonicalisation
+omits undefined-valued keys, so a preimage rebuilt from a record with `mustUnderstand`
+*deleted* is byte-identical to one from a writer that never wrote the field: stripping would
+bypass the seal rather than break it. Every field an S1b writer emits is mandatory on read.
+A defaulted field (`?? 'unfenced'`, `?? []`) is a field the reader supplies for the attacker.
 
 ---
 
@@ -128,4 +182,6 @@ It MUST be rejected. `assertOwns` refuses it on the write path, and the epoch in
 preimage means the record would not verify on the read path either. Authenticity says the
 bytes are genuine; only the fence says the writer may still speak.
 
-Evidence: `tests/s1b-authority.test.ts` W1–W4, A1–A6.
+Evidence: `tests/s1b-authority.test.ts` W1–W4, A1–A6, E1–E6 (A-2, A-5, A-6 — the seals cover
+the interpretation instructions, under separated domains), V1–V4 (the identifier moved with
+the recipe); `tests/s1-integrity.test.ts` I5.

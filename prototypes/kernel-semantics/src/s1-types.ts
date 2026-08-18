@@ -41,12 +41,26 @@ import type {
 } from './types.ts';
 
 /**
- * Format candidate. `2026-08-17` is HISTORICAL and its meaning is fixed: journals written
- * under it mean what they meant. S1b changed effect identity, added writer identity and a
- * MAC, and made unknown required kinds fail closed — all semantic changes, so the
- * identifier moves rather than the meaning (PART 19).
+ * Format candidate. `2026-08-17` and `2026-08-18` are HISTORICAL and their meanings are
+ * fixed: journals written under them mean what they meant. S1b changed effect identity,
+ * added writer identity and a MAC, and made unknown required kinds fail closed — all
+ * semantic changes, so the identifier moves rather than the meaning (PART 19).
+ *
+ * `2026-08-18` → `2026-08-19` FOR THE SAME REASON, and the reason is easy to under-rate.
+ * S1b-1 moved `requiredFeatures` and `mustUnderstand` inside both seals and separated the
+ * checksum and MAC domains. No field changed name or type, so the change LOOKS additive —
+ * but a seal recipe is not metadata about a record, it is the rule by which a reader
+ * decides the record is genuine. A `2026-08-18` record and a `2026-08-19` record with
+ * byte-identical fields carry different, non-interchangeable checksums, and neither reader
+ * can verify the other's records.
+ *
+ * Two non-interoperable recipes under one identifier is the definition of an ambiguous
+ * format: a reader holding a record stamped `2026-08-18` cannot tell which rule made it,
+ * so it must either guess or accept both — and accepting both re-opens the gap the
+ * revision closed. The identifier moves so that the question never arises. Doc 31 §7 named
+ * this revision in advance; this is it.
  */
-export const S1_PROTOCOL_VERSION = '2026-08-18';
+export const S1_PROTOCOL_VERSION = '2026-08-19';
 
 /** Root of a lineage tree. Every execution forked from another shares its family. */
 export type FamilyId = string & { readonly __brand: 'FamilyId' };

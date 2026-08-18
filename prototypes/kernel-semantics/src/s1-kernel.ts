@@ -32,12 +32,13 @@ import {
   resolveEffectIdentity, schemeSupported,
 } from './s1b-identity.ts';
 import {
-  type Signer, type WriterLease, type WriterRegistry,
-  assertOwns, macPreimage, WriterFencedError, AuthenticityError,
+  type RecordEnvelope, type Signer, type WriterLease, type WriterRegistry,
+  assertOwns, envelopeFault, envelopeOf, macPreimage, recordChecksum,
+  WriterFencedError, AuthenticityError,
 } from './s1b-writer.ts';
 import {
   type UpcasterRegistry, S1B_FORMAT_VERSION, UnsupportedJournalError,
-  canInterpret, defaultUpcasters, envelopeFor,
+  assertFormatReadable, canInterpret, defaultUpcasters, envelopeFor,
 } from './s1b-compat.ts';
 
 export class S1Error extends Error {}
@@ -96,16 +97,112 @@ export interface S1InvokeOptions {
 }
 
 /**
- * S1 record format: the checksum covers the WHOLE record, not just the events (review #2
+ * S1 record format: the checksum covers the WHOLE envelope, not just the events (review #2
  * found that an events-only checksum left the envelope — commit token, execution, family —
  * unprotected, so a record could be re-attributed without detection).
+ *
+ * "Whole envelope" was still not whole. Review #6 (S1b-1) found `writerId`, `epoch`,
+ * `formatVersion`, `requiredFeatures` and `mustUnderstand` outside it — the last two being
+ * the reader's own interpretation instructions, so an unkeyed edit could disarm the
+ * fail-closed layer and re-open F-38. The recipe now lives in ONE place
+ * (`recordChecksum`/`macPreimage` over `RecordEnvelope`) precisely because two hand-written
+ * copies of a field list is how three of them went missing.
+ *
+ * THIS VERIFIER HAS THREE ANSWERS, NOT TWO, and the third is the whole point.
+ *
+ *   throws     REFUSE THE JOURNAL. The record is intact enough to say it was ALTERED, and
+ *              acting on the rest would act on a history we know is wrong.
+ *   false      the record is INVALID. Trailing, that is an interrupted write and discarding
+ *              it is correct (B6); mid-journal, `readJournal` reports it as corruption.
+ *   true       fold it.
+ *
+ * `readJournal` discards whatever its verifier rejects, and a trailing run of rejects is by
+ * construction indistinguishable from an interrupted write — so anything a boolean `false`
+ * can express, a journal can express by being damaged. Two distinct failures were reaching
+ * that same silence and both had to be lifted out of it:
+ *
+ *   RETIRED FORMAT   changing what the seals cover changed the recipe, so the identifier
+ *                    moved (`2026-08-18` → `2026-08-19`). The danger is not that old
+ *                    records fail — they should — but that every record of a
+ *                    previous-revision journal fails at once, so recovery would return an
+ *                    empty kernel in silence and the next run would repeat every effect in
+ *                    it. `assertFormatReadable` throws instead.
+ *   MALFORMED        a record that PARSED but cannot yield an envelope arrived whole and
+ *                    was then changed — most dangerously by having `requiredFeatures` or
+ *                    `mustUnderstand` deleted. Returning `false` put it on the discard
+ *                    path, where a trailing or only record disappears without a word.
+ *
+ * "Damaged", "written by the previous revision" and "altered after it was written" must
+ * never reach the same outcome, and a boolean verifier cannot say the second two things.
+ *
+ * The refusals live HERE, not in `canInterpret`, for one structural reason: a retired-format
+ * or stripped record fails the checksum, so it never reaches the compatibility gate. The
+ * verifier is the one choke point every read path passes through — `recover()`, `fork()`
+ * and `events()` all reach the disk through it — so this cannot be bypassed by someone
+ * adding a reader later.
  */
 export function verifyS1Record(record: unknown): boolean {
-  const rec = record as { commitToken?: unknown; executionId?: unknown; familyId?: unknown; events?: unknown; checksum?: unknown };
-  if (typeof rec.checksum !== 'string') return false;
-  return rec.checksum === sha({
-    commitToken: rec.commitToken, executionId: rec.executionId, familyId: rec.familyId, events: rec.events,
-  });
+  assertFormatReadable(record);
+
+  // MALFORMED IS NOT TORN, and conflating them was the same silence one door along.
+  //
+  // A torn record is a record whose BYTES ARE INCOMPLETE: the process died mid-append and
+  // the tail of the line never reached the disk. Such a line does not parse, `readJournal`
+  // never hands it to a verifier at all, and discarding it is right — nothing was ever
+  // committed. That is the ONLY thing "discard the trailing record" was ever licensed to
+  // mean, and it stays licensed.
+  //
+  // A line that PARSED is a whole record that arrived intact and was then changed. When
+  // what is missing from it is `requiredFeatures` or `mustUnderstand`, what was removed is
+  // the reader's own interpretation instructions — and returning `false` here handed that
+  // record to the discard path, where a trailing or only record vanishes without a word.
+  // Strip the last record of a journal and recovery returned a valid-looking PREFIX; strip
+  // the only record and it returned an EMPTY KERNEL, both in silence, and the next run
+  // repeated every claim, landing and settlement it could no longer see (S1b-1 review 7,
+  // reproduced through `recover()` for signed and signerless journals alike).
+  //
+  // That is the F-11 shape a third time: "these bytes are damaged" and "these bytes were
+  // altered" must never reach the same outcome, and a boolean cannot say the second thing.
+  // So this THROWS, exactly as the retired-format check above it does, and for exactly the
+  // same reason.
+  //
+  // NOT QUARANTINABLE, deliberately. Quarantine's premise is that the operator is told what
+  // is being dropped and what it cost — see the invariant report at the end of `recover`.
+  // A record whose interpretation instructions were removed cannot say what dropping it
+  // would cost; that is the property that was taken from it. Repair or convert it as a
+  // deliberate, journaled act, the same answer a retired format gets.
+  const env = envelopeOf(record);
+  if (env === null) {
+    throw new JournalIntegrityError(
+      `a complete journal record is malformed: ${envelopeFault(record) ?? 'unreadable envelope'}. `
+      + 'This record parsed, so it is NOT an interrupted write and MUST NOT be discarded as '
+      + 'one — its bytes all arrived and were then altered. Interpretation-critical fields '
+      + '(`requiredFeatures`, `mustUnderstand`) are what a reader uses to know it may not '
+      + 'skip an event, so a reader that dropped this record would silently lose whatever '
+      + 'the record was protecting.',
+    );
+  }
+  // The seal itself is under the same rule: a parsed record with no checksum is stripped,
+  // not unsealed, and letting THAT one through the discard path would reopen the hole one
+  // field over. A record whose checksum is merely WRONG is a different thing and keeps its
+  // existing meaning — see below.
+  const rec = record as { checksum?: unknown };
+  if (typeof rec.checksum !== 'string') {
+    throw new JournalIntegrityError(
+      'a complete journal record is malformed: its `checksum` is missing or is not a string. '
+      + 'A record that parsed but carries no seal was stripped, not interrupted.',
+    );
+  }
+  try {
+    // A checksum that is present and DOES NOT MATCH keeps the meaning the format already
+    // gave it: the record is invalid, and a trailing invalid record is an interrupted write
+    // (B6/I7c). Only ABSENCE is malformed, because only absence is indistinguishable from
+    // a field that was never written.
+    return rec.checksum === recordChecksum(env);
+  } catch {
+    // A verifier that throws on a malformed record turns a discardable line into a crash.
+    return false;
+  }
 }
 
 /**
@@ -1128,32 +1225,37 @@ export class S1Kernel {
     const writerId = this.lease?.writerId ?? 'unfenced';
     const epoch = this.lease?.epoch ?? 0;
     const compat = envelopeFor(events.map((e) => e.kind));
-    const record = {
+    // ONE envelope, sealed twice under two domains. Both seals are derived from this single
+    // value, so a field cannot be inside one recipe and outside the other — which is
+    // exactly how `requiredFeatures` and `mustUnderstand` ended up unauthenticated in both
+    // (S1b-1). Adding a field to `RecordEnvelope` authenticates it everywhere at once.
+    const envelope: RecordEnvelope = {
       commitToken, executionId: execId, familyId,
       writerId, epoch,
       formatVersion: compat.formatVersion,
       requiredFeatures: compat.requiredFeatures,
       mustUnderstand: compat.mustUnderstand,
-      events, checksum: '',
+      events,
     };
-    // Checksum covers the WHOLE record (review #2 finding).
-    const checksum = sha({ commitToken, executionId: execId, familyId, events });
-    // The MAC binds the record to its family, writer, epoch and format. That binding is
-    // what makes a GENUINE record stolen from another execution, another fork or an
-    // earlier epoch fail — replay of a valid record was invisible to the S1 checksum.
-    const mac = this.signer === null ? '' : this.signer.sign(macPreimage({
-      commitToken, executionId: execId, familyId, writerId, epoch,
-      formatVersion: compat.formatVersion, events,
-    }));
+    // The unkeyed seal: catches everything that was not deliberate, including a middlebox
+    // that drops the must-understand instructions a keyless reader has nothing else to
+    // check them with.
+    const checksum = recordChecksum(envelope);
+    // The keyed seal binds the record to its family, writer, epoch, format AND the terms it
+    // must be interpreted under. That binding is what makes a GENUINE record stolen from
+    // another execution, another fork or an earlier epoch fail — replay of a valid record
+    // was invisible to the S1 checksum — and what stops storage disarming PART 6 by editing
+    // one array it holds no key for.
+    const mac = this.signer === null ? '' : this.signer.sign(macPreimage(envelope));
     try {
-      this.storage.appendCommit({ ...record, checksum, mac, keyId: this.signer?.keyId ?? '' });
+      this.storage.appendCommit({ ...envelope, checksum, mac, keyId: this.signer?.keyId ?? '' });
     } catch (err) {
       if (err instanceof CrashError) throw err;
       // Whether these bytes reached the disk is now UNKNOWN, and the projection below
       // must not advance either way. Wrapping it makes the ambiguity a distinct type the
       // caller cannot mistake for "the capability failed" (docs/20 F-27).
       throw new CommitFailedError(
-        `commit ${record.commitToken} for ${execId}: durable outcome unknown (${String(err)})`,
+        `commit ${commitToken} for ${execId}: durable outcome unknown (${String(err)})`,
       );
     }
 
@@ -1242,18 +1344,16 @@ export class S1Kernel {
       }
 
       // ---- authenticity --------------------------------------------------------
-      const rr = r as unknown as {
-        commitToken: string; executionId: string; writerId?: string; epoch?: number;
-        formatVersion: string; mac?: string; keyId?: string;
-      };
+      const rr = r as unknown as { commitToken: string; mac?: string; keyId?: string };
       if (opts.signer !== undefined) {
-        const ok = typeof rr.mac === 'string' && rr.mac !== '' && opts.signer.verify(
-          macPreimage({
-            commitToken: rr.commitToken, executionId: rr.executionId, familyId: r.familyId,
-            writerId: rr.writerId ?? 'unfenced', epoch: rr.epoch ?? 0,
-            formatVersion: rr.formatVersion, events: r.events,
-          }),
-          rr.mac ?? '', rr.keyId ?? '',
+        // The reader reconstructs the preimage through the SAME extractor the writer sealed
+        // — no `?? 'unfenced'`, no `?? []`, no second copy of the field list. Every defaulted
+        // field is a field the reader can silently supply on the writer's behalf, and the
+        // must-understand strip attack (S1b-1) is precisely that: a field removed from the
+        // record and put back by the verifier.
+        const env = envelopeOf(rec);
+        const ok = env !== null && typeof rr.mac === 'string' && rr.mac !== '' && opts.signer.verify(
+          macPreimage(env), rr.mac, rr.keyId ?? '',
         );
         if (!ok && opts.acceptUnverifiable !== true) {
           throw new AuthenticityError(

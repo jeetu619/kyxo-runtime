@@ -15,11 +15,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { S1Kernel, verifyS1Record } from '../src/s1-kernel.ts';
+import { JournalIntegrityError, S1Kernel, verifyS1Record } from '../src/s1-kernel.ts';
 import { digest, foldAll } from '../src/s1-fold.ts';
 import { S1_PROTOCOL_VERSION } from '../src/s1-types.ts';
 import type { FamilyId, S1Event } from '../src/s1-types.ts';
 import { Storage, canonical, sha } from '../src/storage.ts';
+import { S1B_FORMAT_VERSION } from '../src/s1b-compat.ts';
+import { envelopeOf, recordChecksum } from '../src/s1b-writer.ts';
 import type {
   CapabilityProvider, CapabilityResult, DelegationOutcome, EffectProposal, InvokeCtx,
 } from '../src/types.ts';
@@ -183,19 +185,51 @@ test('B8/I4: rewriting the hash to match a rewritten payload breaks the chain', 
 // I5–I7 — record-level integrity
 // ---------------------------------------------------------------------------
 
-test('B8/I5: the commit checksum covers the whole record, not just the events', async () => {
+test('B8/I5: the commit checksum covers the whole envelope, not just the events', async () => {
   const f = setup();
   await f.k.invoke(f.exec, 'notes.write', { secret: 's' }, f.grant, { step: 'a' });
 
   const { records } = f.storage.readJournal(verifyS1Record);
   assert.ok(records.length > 0);
-  const rec = records[0] as { commitToken: string; executionId: string; familyId: string; events: unknown; checksum: string };
+  const rec = records[0] as Record<string, unknown>;
 
   // Re-attributing a record to another execution must be detectable. Under an
   // events-only checksum this passed unnoticed (review #2).
   assert.equal(verifyS1Record({ ...rec, executionId: 'exec_someone_else' }), false);
   assert.equal(verifyS1Record({ ...rec, familyId: 'fam_someone_else' }), false);
   assert.equal(verifyS1Record({ ...rec, commitToken: 'ct_replayed' }), false);
+
+  // S1b-1: "the whole record" stopped at four fields. Everything the writer decided and a
+  // reader will act on belongs under the seal — who wrote it, under which epoch, in which
+  // format, and the terms it must be interpreted under. Each of these mutations verified
+  // clean before the envelope was unified.
+  assert.equal(verifyS1Record({ ...rec, writerId: 'writer-someone-else' }), false, 'writerId');
+  assert.equal(verifyS1Record({ ...rec, epoch: (rec['epoch'] as number) + 1 }), false, 'epoch');
+  assert.equal(verifyS1Record({ ...rec, formatVersion: '1999-01-01' }), false, 'formatVersion');
+  assert.equal(verifyS1Record({ ...rec, requiredFeatures: [] }), false, 'requiredFeatures');
+  assert.equal(verifyS1Record({ ...rec, mustUnderstand: [] }), false, 'mustUnderstand');
+
+  // Deleting a field must not be cheaper than editing it. `canonical` drops undefined keys,
+  // so a preimage rebuilt from a stripped record would otherwise match a writer that never
+  // wrote the field — strip bypasses the seal instead of breaking it.
+  //
+  // And a stripped record must be REFUSED, not merely called invalid: `false` is the answer
+  // that means "interrupted write", and a trailing or only record answered that way is
+  // discarded in silence. The record parsed, so its bytes all arrived; something changed
+  // them afterwards (S1b-1 review 7).
+  const { mustUnderstand: _mu, ...stripped } = rec;
+  assert.throws(
+    () => verifyS1Record(stripped),
+    (e: unknown) => e instanceof JournalIntegrityError && /malformed/.test((e as Error).message),
+    'a stripped field is malformed, not absent — and malformed is not torn',
+  );
+  const { requiredFeatures: _rf, ...strippedFeatures } = rec;
+  assert.throws(
+    () => verifyS1Record(strippedFeatures),
+    (e: unknown) => e instanceof JournalIntegrityError,
+    'the same for the feature bits a reader fails closed on',
+  );
+
   assert.equal(verifyS1Record(rec), true, 'the untouched record still verifies');
 });
 
@@ -350,7 +384,16 @@ test('B8/I9: the protocol version is stamped on every event and is the format\'s
 
   const versions = new Set(f.k.events(f.familyId).map((e) => e.protocolVersion));
   assert.deepEqual([...versions], [S1_PROTOCOL_VERSION], 'one revision writes one version');
-  assert.equal(S1_PROTOCOL_VERSION, '2026-08-18', 'the S1b freeze candidate');
+  assert.equal(S1_PROTOCOL_VERSION, '2026-08-19', 'the S1b-1 revision');
+
+  // ONE identifier, stamped twice. The events carry `protocolVersion` and the record
+  // carries `formatVersion`; both are inside seals, so a journal in which they disagree is
+  // one no reader can resolve — neither stamp is more authoritative than the other.
+  assert.equal(S1B_FORMAT_VERSION, S1_PROTOCOL_VERSION, 'the record and its events agree');
+  const { records } = f.storage.readJournal(verifyS1Record);
+  for (const rec of records) {
+    assert.equal((rec as { formatVersion: string }).formatVersion, S1_PROTOCOL_VERSION);
+  }
 
   // The version is inside the hash preimage, so it cannot be rewritten after the fact to
   // make records from one revision pass as another.
@@ -363,15 +406,22 @@ test('B8/I9: the protocol version is stamped on every event and is the format\'s
 // I11–I14 — integrity on the READ path (found by adversarial review)
 // ---------------------------------------------------------------------------
 
-/** Re-seal a journal so every record passes `verifyS1Record`. An attacker with disk access. */
+/**
+ * Re-seal a journal so every record passes `verifyS1Record`. An attacker with disk access.
+ *
+ * It calls the runtime's own `recordChecksum` rather than re-deriving the recipe, and that
+ * is the honest model: the checksum is UNKEYED, so an attacker recomputes it exactly. A
+ * test that re-implements the recipe is instead testing whether the attacker guessed the
+ * field list — which is how the S1b-1 gap survived, since the two copies drifted apart and
+ * every attack test kept passing against a recipe nobody used.
+ */
 function reseal(storage: Storage): void {
   const raw = (storage as unknown as { journal: string[] }).journal;
   for (let i = 0; i < raw.length; i += 1) {
-    const rec = JSON.parse(raw[i]!) as { commitToken: string; executionId: string; familyId: string; events: unknown };
-    raw[i] = JSON.stringify({
-      ...rec,
-      checksum: sha({ commitToken: rec.commitToken, executionId: rec.executionId, familyId: rec.familyId, events: rec.events }),
-    });
+    const rec = JSON.parse(raw[i]!) as Record<string, unknown>;
+    const env = envelopeOf(rec);
+    if (env === null) continue;
+    raw[i] = JSON.stringify({ ...rec, checksum: recordChecksum(env) });
   }
 }
 

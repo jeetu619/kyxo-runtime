@@ -29,10 +29,77 @@
  *   understood it, not guessed by a reader that does not.
  */
 
+import { S1_PROTOCOL_VERSION } from './s1-types.ts';
+
 export class UnsupportedJournalError extends Error {}
 
-/** The record format this reader writes. Distinct from the identity scheme. */
-export const S1B_FORMAT_VERSION = '2026-08-18';
+/**
+ * The record format this reader writes. Distinct from the identity scheme.
+ *
+ * ONE identifier, stamped in two places — `protocolVersion` on every event and
+ * `formatVersion` on every record — so it is DERIVED here rather than typed a second time.
+ * A duplicated literal is precisely the shape of the defect this revision exists to fix
+ * (two hand-written copies of one fact, drifting), and the drift would be worse here than
+ * it was there: a record whose envelope claims one revision while the events inside it
+ * claim another is a record no reader can resolve, because both stamps are inside seals
+ * and neither is more authoritative than the other.
+ */
+export const S1B_FORMAT_VERSION = S1_PROTOCOL_VERSION;
+
+/**
+ * Format identifiers this reader once wrote and can no longer verify, and why.
+ *
+ * WHY THIS EXISTS AT ALL — the failure it prevents is silent, not loud.
+ *
+ * `Storage.readJournal` discards every record its verifier rejects, and a trailing run of
+ * rejects is by construction indistinguishable from an interrupted write. So a journal
+ * written under a superseded SEAL RECIPE does not announce itself: every record fails the
+ * new checksum, every record is discarded as torn, `corruptionInMiddle` never trips
+ * because no valid record follows a bad one, and recovery returns an EMPTY kernel. The
+ * next run then has no record of any claim, landing or settlement, and repeats all of
+ * them. storage.ts already names this failure once (F-11, where the recipe was hard-coded
+ * on the disk side); a version bump reaches the same place by a different road.
+ *
+ * So a retired identifier is not a historical note. It is the one thing that distinguishes
+ * "these bytes are damaged" from "these bytes are fine and I am the wrong reader" — and
+ * only the second of those is safe to answer by stopping.
+ *
+ * Entries are added, never removed: an identifier's meaning is fixed, and a reader that
+ * forgets a retired format regains the silent-empty-recovery bug for it.
+ */
+export const RETIRED_FORMATS: ReadonlyMap<string, string> = new Map([
+  ['2026-08-18',
+    "its checksum and MAC covered only part of the envelope — `requiredFeatures` and "
+    + '`mustUnderstand`, the reader\'s own interpretation instructions, were outside both '
+    + '(S1b-1). `2026-08-19` seals the whole envelope under separated domains, so the two '
+    + 'recipes disagree about every record and neither can verify the other'],
+]);
+
+/**
+ * Refuse a record stamped with a format whose seals this reader does not implement.
+ *
+ * Deliberately NOT an allowlist. An identifier this reader has never heard of is a FUTURE
+ * revision, and forward tolerance is decided where doc 29 §3 puts it — by feature bits and
+ * by `mustUnderstand`, which are the fields that say what a reader would actually be
+ * getting wrong. Refusing on the identifier alone would make every future revision
+ * unreadable regardless of whether it changed anything this reader depends on, which is
+ * the opposite of the negotiated compatibility PART 6 is built on.
+ *
+ * What this refuses is narrower and knowable: the identifiers we ourselves retired.
+ */
+export function assertFormatReadable(record: unknown): void {
+  if (record === null || typeof record !== 'object') return;
+  const version = (record as { formatVersion?: unknown }).formatVersion;
+  if (typeof version !== 'string') return;
+  const why = RETIRED_FORMATS.get(version);
+  if (why === undefined) return;
+  throw new UnsupportedJournalError(
+    `refusing to read a record written under retired format '${version}': ${why}. `
+    + 'A retired-format record is NOT corrupt and MUST NOT be discarded as an interrupted '
+    + `write — read it with a reader that implements '${version}', or convert it as a `
+    + 'deliberate, journaled act.',
+  );
+}
 
 /**
  * Feature bits a journal may require of its reader.
